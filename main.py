@@ -1,11 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
-from app.schemas.contracts import (
+from contracts import (
     TrainOccupancyWindow,
     MaintenanceWorkOrder,
     SolverRequest,
     BlockScheduleResponse
+)
+from backend.app.data_engine import (
+    get_maintenance_work_orders as load_maintenance_work_orders,
+    get_train_schedules as load_train_schedules,
 )
 
 app = FastAPI(
@@ -31,14 +35,12 @@ def health_check():
 @app.get("/api/data/trains", response_model=List[TrainOccupancyWindow])
 def get_train_schedules():
     """Endpoint for Agent A: Ingests Kaggle train schedule data."""
-    # Placeholder to be filled by Agent A
-    return []
+    return load_train_schedules()
 
 @app.get("/api/data/work-orders", response_model=List[MaintenanceWorkOrder])
 def get_maintenance_work_orders():
     """Endpoint for Agent A: Returns synthetic/TMS work orders."""
-    # Placeholder to be filled by Agent A
-    return []
+    return load_maintenance_work_orders()
 
 # --- AGENT B & C ENDPOINTS ---
 @app.post("/api/schedule/generate", response_model=BlockScheduleResponse)
