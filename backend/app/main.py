@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .data_engine import (
+    SUB_SECTION_IDS,
     get_maintenance_work_orders as load_maintenance_work_orders,
     get_train_schedules as load_train_schedules,
 )
@@ -53,6 +54,9 @@ def get_maintenance_work_orders():
 def generate_schedule(payload: SolverRequest):
     global _last_audit_trail
     sections = set(payload.section_ids)
+    if "NDLS_CNB" in sections:
+        sections.update(SUB_SECTION_IDS)
+        payload = payload.model_copy(update={"section_ids": sorted(sections)})
     work_orders = [
         w for w in load_maintenance_work_orders()
         if not sections or w.section_id in sections
@@ -67,6 +71,11 @@ def generate_schedule(payload: SolverRequest):
     )
 
     _, fol_audit = verify_safety_invariants(result.schedule, trains)
+    if fol_audit:
+        passed = sum(1 for entry in fol_audit if entry.passed)
+        result.metrics.fol_rule_compliance_pct = round(
+            100.0 * passed / len(fol_audit), 2
+        )
     result.audit_trail.extend(fol_audit)
     _last_audit_trail = result.audit_trail
     return result

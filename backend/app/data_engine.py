@@ -15,6 +15,13 @@ from .schemas.contracts import (
 
 
 _ROUTE_SECTION_ID = "NDLS_CNB"
+_CORRIDOR_LENGTH_KM = 440.0
+_SUB_SECTIONS = (
+    ("NDLS_CNB_SEC1", 0.0, 150.0),
+    ("NDLS_CNB_SEC2", 150.0, 300.0),
+    ("NDLS_CNB_SEC3", 300.0, _CORRIDOR_LENGTH_KM),
+)
+SUB_SECTION_IDS = tuple(section[0] for section in _SUB_SECTIONS)
 _STOP_RE = re.compile(
     r"^(?P<station>.*?)\s*\(arr=(?P<arrival>[^,]+),dep=(?P<departure>[^)]+)"
 )
@@ -90,31 +97,38 @@ def _window_for_train(
 ) -> list[TrainOccupancyWindow]:
     start = _clock_hours(entry.departure, train_no, entry.station)
     end = _clock_hours(route_exit.arrival, train_no, route_exit.station)
+    if end <= start:
+        end += 24.0
+    duration = end - start
+    # Position along the corridor is interpolated linearly between the endpoints.
+    km_origin, km_dest = (
+        (0.0, _CORRIDOR_LENGTH_KM)
+        if _is_new_delhi(entry.station)
+        else (_CORRIDOR_LENGTH_KM, 0.0)
+    )
 
-    if end < start:
-        return [
-            TrainOccupancyWindow(
-                train_no=train_no,
-                section_id=_ROUTE_SECTION_ID,
-                start_time_hr=start,
-                end_time_hr=24.0,
-            ),
-            TrainOccupancyWindow(
-                train_no=train_no,
-                section_id=_ROUTE_SECTION_ID,
-                start_time_hr=0.0,
-                end_time_hr=end,
-            ),
-        ]
-
-    return [
-        TrainOccupancyWindow(
-            train_no=train_no,
-            section_id=_ROUTE_SECTION_ID,
-            start_time_hr=start,
-            end_time_hr=end,
+    windows: list[TrainOccupancyWindow] = []
+    for section_id, sec_start_km, sec_end_km in _SUB_SECTIONS:
+        fractions = sorted(
+            (km - km_origin) / (km_dest - km_origin)
+            for km in (sec_start_km, sec_end_km)
         )
-    ]
+        enter, leave = start + fractions[0] * duration, start + fractions[1] * duration
+        # Split anything that crosses midnight into two same-day windows.
+        for lo, hi in ((enter, leave), (enter - 24.0, leave - 24.0)):
+            lo, hi = max(lo, 0.0), min(hi, 24.0)
+            if hi - lo > 1e-6:
+                windows.append(
+                    TrainOccupancyWindow(
+                        train_no=train_no,
+                        section_id=section_id,
+                        start_time_hr=lo,
+                        end_time_hr=hi,
+                        train_start_km=sec_start_km,
+                        train_end_km=sec_end_km,
+                    )
+                )
+    return windows
 
 
 def get_train_schedules() -> list[TrainOccupancyWindow]:
@@ -172,7 +186,7 @@ def get_train_schedules() -> list[TrainOccupancyWindow]:
 
 
 def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
-    """Return 30 deterministic synthetic work orders on the NDLS_CNB section."""
+    """Return 30 deterministic synthetic work orders across the NDLS_CNB sub-sections."""
     rng = random.Random(_RANDOM_SEED)
     departments = [
         Department.ENGINEERING,
@@ -212,7 +226,7 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
         MaintenanceWorkOrder(
             work_id=f"WO-26027-{index:03}",
             department=department,
-            section_id=_ROUTE_SECTION_ID,
+            section_id=rng.choice(SUB_SECTION_IDS),
             defect_type=rng.choice(defects[department]),
             duration_hrs=round(rng.uniform(1.0, 4.0), 2),
             urgency=urgency,

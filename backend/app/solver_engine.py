@@ -568,6 +568,7 @@ def solve_maintenance_schedule(
                 "end_time_hr": end,
                 "co_located_with": other_ids,
                 "fol_verified": True,
+                "power_isolated": order["department"] == "TRACTION",
             }
         )
         audit_trail.append(
