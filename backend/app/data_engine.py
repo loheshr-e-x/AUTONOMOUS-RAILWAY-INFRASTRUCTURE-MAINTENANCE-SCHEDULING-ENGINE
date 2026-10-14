@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from contracts import (
+from .schemas.contracts import (
     Department,
     MaintenanceWorkOrder,
     TrainOccupancyWindow,
