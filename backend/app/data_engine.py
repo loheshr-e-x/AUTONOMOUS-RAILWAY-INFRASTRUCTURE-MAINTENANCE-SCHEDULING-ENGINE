@@ -131,12 +131,19 @@ def _window_for_train(
     return windows
 
 
+def _is_even_numbered(train_no: str) -> bool:
+    """Single-direction filter: keep trains whose number ends in an even digit."""
+    return bool(train_no) and train_no[-1].isdigit() and int(train_no[-1]) % 2 == 0
+
+
 def get_train_schedules() -> list[TrainOccupancyWindow]:
     """Load train windows for schedules passing both New Delhi and Kanpur."""
     schedules: list[TrainOccupancyWindow] = []
     with _train_data_path().open(encoding="utf-8-sig", newline="") as csv_file:
         for row in csv.DictReader(csv_file):
             train_no = (row.get("train_no") or "").strip()
+            if not _is_even_numbered(train_no):
+                continue
             stops = _parse_stops(row.get("intermediate_stops") or "")
             new_delhi_index = next(
                 (
