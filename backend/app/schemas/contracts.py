@@ -16,9 +16,15 @@ class UrgencyLevel(int, Enum):
     ROUTINE = 3
 
 
+class TrackLine(str, Enum):
+    UP_LINE = "UP_LINE"
+    DOWN_LINE = "DOWN_LINE"
+
+
 class TrainOccupancyWindow(BaseModel):
     train_no: str
     section_id: str
+    track_line: TrackLine = TrackLine.DOWN_LINE
     start_time_hr: float = Field(..., ge=0.0, le=24.0)
     end_time_hr: float = Field(..., ge=0.0, le=24.0)
     train_start_km: Optional[float] = Field(default=None, ge=0.0)
@@ -29,6 +35,8 @@ class MaintenanceWorkOrder(BaseModel):
     work_id: str
     department: Department
     section_id: str
+    track_line: TrackLine = TrackLine.DOWN_LINE
+    heavy_equipment: bool = False
     defect_type: str
     duration_hrs: float = Field(..., gt=0.0, le=8.0)
     urgency: UrgencyLevel
@@ -46,6 +54,7 @@ class ScheduledBlockAssignment(BaseModel):
     work_id: str
     department: Department
     section_id: str
+    track_line: TrackLine = TrackLine.DOWN_LINE
     start_time_hr: float
     end_time_hr: float
     co_located_with: Optional[List[str]] = []

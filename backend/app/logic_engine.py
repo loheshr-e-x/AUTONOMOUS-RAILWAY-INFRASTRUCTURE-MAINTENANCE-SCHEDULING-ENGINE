@@ -8,11 +8,13 @@ from .schemas.contracts import (
     AuditLogEntry,
     Department,
     ScheduledBlockAssignment,
+    TrackLine,
     TrainOccupancyWindow,
 )
 
 MIN_SAFETY_BUFFER_METERS = 1_000.0
 ENHANCED_SAFETY_BUFFER_METERS = 2_000.0
+ADJACENT_TRACK_BUFFER_METERS = 1_000.0
 
 Fact = Tuple[object, ...]
 Bindings = Dict[str, object]
@@ -108,6 +110,15 @@ _SAFETY_RULES = (
         ),
         conclusion=("distance_buffer_unverified", "?assignment", "?train"),
     ),
+    _Rule(
+        premises=(
+            ("heavy_up_line_work", "?assignment"),
+            ("adjacent_down_train", "?assignment", "?train"),
+            ("time_overlap", "?assignment", "?train"),
+            ("adjacent_buffer_short", "?assignment", "?train"),
+        ),
+        conclusion=("adjacent_track_violation", "?assignment", "?train"),
+    ),
 )
 
 
@@ -188,9 +199,43 @@ def verify_safety_invariants(
                 facts.add(("isolation_missing", assignment_index))
 
     pair_keys: Set[Tuple[int, int]] = set()
+    adjacent_pairs: Dict[int, List[Tuple[int, TrainOccupancyWindow, bool]]] = {}
     for assignment_index, assignment in enumerate(schedule):
+        is_heavy_up = (
+            assignment.heavy_equipment
+            and assignment.track_line == TrackLine.UP_LINE
+        )
+        if is_heavy_up:
+            facts.add(("heavy_up_line_work", assignment_index))
         for train_index, train in enumerate(trains):
             if assignment.section_id != train.section_id:
+                continue
+            if is_heavy_up and train.track_line == TrackLine.DOWN_LINE:
+                if (
+                    _valid_time_interval(
+                        assignment.start_time_hr, assignment.end_time_hr
+                    )
+                    and _valid_time_interval(
+                        train.start_time_hr, train.end_time_hr
+                    )
+                    and _time_intervals_overlap(assignment, train)
+                ):
+                    facts.add(("adjacent_down_train", assignment_index, train_index))
+                    facts.add(("time_overlap", assignment_index, train_index))
+                    coordinates = _spatial_coordinates(assignment, train)
+                    # Unverifiable location is treated as inside the buffer (fail closed).
+                    if (
+                        coordinates is None
+                        or _separation_meters(coordinates)
+                        < ADJACENT_TRACK_BUFFER_METERS
+                    ):
+                        facts.add(("adjacent_buffer_short", assignment_index, train_index))
+                adjacent_pairs.setdefault(assignment_index, []).append(
+                    (train_index, train, True)
+                )
+                continue
+            # Clearance is evaluated strictly on the matching track line.
+            if assignment.track_line != train.track_line:
                 continue
 
             pair_key = (assignment_index, train_index)
@@ -375,6 +420,36 @@ def verify_safety_invariants(
                     ),
                     passed=buffer_passed,
                     explanation=buffer_explanation,
+                )
+            )
+
+        if assignment.heavy_equipment and assignment.track_line == TrackLine.UP_LINE:
+            adjacent = adjacent_pairs.get(assignment_index, [])
+            violations = [
+                train.train_no
+                for train_index, train, _ in adjacent
+                if ("adjacent_track_violation", assignment_index, train_index)
+                in inferred_facts
+            ]
+            audit.append(
+                AuditLogEntry(
+                    rule_name="Adjacent Track Heavy Equipment Buffer",
+                    predicate_evaluated=(
+                        f"heavy_equipment({assignment.work_id}, UP_LINE) -> "
+                        f"distance_to_DOWN_LINE_trains >= "
+                        f"{ADJACENT_TRACK_BUFFER_METERS:g}m"
+                    ),
+                    passed=not violations,
+                    explanation=(
+                        f"Heavy equipment work {assignment.work_id} is within "
+                        f"{ADJACENT_TRACK_BUFFER_METERS:g} m of DOWN_LINE trains "
+                        f"{', '.join(sorted(set(violations)))} (or their "
+                        "position could not be verified)."
+                        if violations
+                        else f"Heavy equipment work {assignment.work_id} has no "
+                        f"concurrent DOWN_LINE train within "
+                        f"{ADJACENT_TRACK_BUFFER_METERS:g} m."
+                    ),
                 )
             )
 

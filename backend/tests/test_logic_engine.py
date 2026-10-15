@@ -4,6 +4,7 @@ from backend.app.logic_engine import verify_safety_invariants
 from backend.app.schemas.contracts import (
     Department,
     ScheduledBlockAssignment,
+    TrackLine,
     TrainOccupancyWindow,
 )
 
@@ -137,6 +138,49 @@ class SafetyInvariantTests(unittest.TestCase):
         self.assertTrue(valid)
         self.assertTrue(
             self.get_audit(audit, "Passenger Train Clearance Invariant").passed
+        )
+
+    def test_clearance_is_evaluated_only_on_matching_track_line(self):
+        valid, _ = verify_safety_invariants(
+            [make_assignment(track_line=TrackLine.UP_LINE)],
+            [make_train(track_line=TrackLine.DOWN_LINE)],
+        )
+        self.assertTrue(valid)
+
+        valid, _ = verify_safety_invariants(
+            [make_assignment(track_line=TrackLine.UP_LINE)],
+            [make_train(track_line=TrackLine.UP_LINE)],
+        )
+        self.assertFalse(valid)
+
+    def test_heavy_equipment_on_up_line_needs_adjacent_down_line_buffer(self):
+        heavy = make_assignment(track_line=TrackLine.UP_LINE, heavy_equipment=True)
+        near = make_train(
+            track_line=TrackLine.DOWN_LINE, train_start_km=10.5, train_end_km=10.6
+        )
+        valid, audit = verify_safety_invariants([heavy], [near])
+        self.assertFalse(valid)
+        self.assertFalse(
+            self.get_audit(audit, "Adjacent Track Heavy Equipment Buffer").passed
+        )
+
+        far = make_train(
+            track_line=TrackLine.DOWN_LINE, train_start_km=20.0, train_end_km=20.1
+        )
+        valid, audit = verify_safety_invariants([heavy], [far])
+        self.assertTrue(valid)
+        self.assertTrue(
+            self.get_audit(audit, "Adjacent Track Heavy Equipment Buffer").passed
+        )
+
+    def test_light_equipment_ignores_adjacent_line(self):
+        valid, audit = verify_safety_invariants(
+            [make_assignment(track_line=TrackLine.UP_LINE)],
+            [make_train(track_line=TrackLine.DOWN_LINE)],
+        )
+        self.assertTrue(valid)
+        self.assertFalse(
+            any(e.rule_name == "Adjacent Track Heavy Equipment Buffer" for e in audit)
         )
 
 

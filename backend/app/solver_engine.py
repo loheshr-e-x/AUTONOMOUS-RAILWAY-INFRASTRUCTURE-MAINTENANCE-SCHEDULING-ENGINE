@@ -26,6 +26,25 @@ def _overlaps(start_a: float, end_a: float, start_b: float, end_b: float) -> boo
     return start_a < end_b and start_b < end_a
 
 
+def _get_track_line(value: Any) -> str:
+    return str(_enum_value(_get(value, "track_line", "DOWN_LINE")))
+
+
+# Local-time weighting: daylight closures (06:00-22:00) hurt most, the
+# 01:00-05:00 night window is free, the remaining hours are a mild shoulder.
+_DAYLIGHT_START, _DAYLIGHT_END = 6.0, 22.0
+_NIGHT_START, _NIGHT_END = 1.0, 5.0
+_DAYLIGHT_WEIGHT, _SHOULDER_WEIGHT = 1.0, 0.25
+
+
+def _time_of_day_cost(start: float, end: float) -> float:
+    """Per-hour penalty integrated over [start, end): daylight > shoulder > night."""
+    daylight = max(0.0, min(end, _DAYLIGHT_END) - max(start, _DAYLIGHT_START))
+    night = max(0.0, min(end, _NIGHT_END) - max(start, _NIGHT_START))
+    shoulder = (end - start) - daylight - night
+    return _DAYLIGHT_WEIGHT * daylight + _SHOULDER_WEIGHT * shoulder
+
+
 def _work_order_value(work_order: Any, name: str) -> Any:
     value = _get(work_order, name)
     if value is None:
@@ -63,6 +82,8 @@ def _normalise_inputs(
                 "work_id": work_id,
                 "department": str(_work_order_value(source, "department")),
                 "section_id": str(_work_order_value(source, "section_id")),
+                "track_line": str(_get_track_line(source)),
+                "heavy_equipment": bool(_get(source, "heavy_equipment", False)),
                 "duration": duration,
                 "urgency": int(_work_order_value(source, "urgency")),
                 "co_location_allowed": bool(
@@ -83,6 +104,7 @@ def _normalise_inputs(
         trains.append(
             {
                 "section_id": str(_get(source, "section_id")),
+                "track_line": str(_get_track_line(source)),
                 "start": max(0.0, start - clearance),
                 "end": min(horizon, end + clearance),
             }
@@ -138,6 +160,15 @@ def _candidate_starts(
         for start in starts
         if not any(
             train["section_id"] == order["section_id"]
+            and (
+                train["track_line"] == order["track_line"]
+                # Heavy UP_LINE equipment also needs the adjacent DOWN_LINE clear.
+                or (
+                    order["heavy_equipment"]
+                    and order["track_line"] == "UP_LINE"
+                    and train["track_line"] == "DOWN_LINE"
+                )
+            )
             and _overlaps(
                 start,
                 start + order["duration"],
@@ -152,6 +183,7 @@ def _candidate_starts(
 def _can_co_locate(order_a: dict[str, Any], order_b: dict[str, Any]) -> bool:
     return (
         order_a["section_id"] == order_b["section_id"]
+        and order_a["track_line"] == order_b["track_line"]
         and order_a["department"] != order_b["department"]
         and order_a["co_location_allowed"]
         and order_b["co_location_allowed"]
@@ -166,6 +198,8 @@ def _compatible(
     orders: list[dict[str, Any]],
 ) -> bool:
     order_a, order_b = orders[index_a], orders[index_b]
+    if order_a["track_line"] != order_b["track_line"]:
+        return True
     end_a = start_a + order_a["duration"]
     end_b = start_b + order_b["duration"]
     if not _overlaps(start_a, end_a, start_b, end_b):
@@ -186,6 +220,8 @@ def _ac3(
     for left in range(len(orders)):
         for right in range(left + 1, len(orders)):
             a, b = orders[left], orders[right]
+            if a["track_line"] != b["track_line"]:
+                continue
             if (
                 a["department"] == b["department"]
                 or a["section_id"] == b["section_id"]
@@ -222,9 +258,12 @@ def _disruption_cost(
 ) -> float:
     order = orders[index]
     end = start + order["duration"]
-    cost = 0.0
+    cost = _time_of_day_cost(start, end)
     for train in trains:
-        if train["section_id"] != order["section_id"]:
+        if (
+            train["section_id"] != order["section_id"]
+            or train["track_line"] != order["track_line"]
+        ):
             continue
         gap = train["start"] - end if train["start"] >= end else start - train["end"]
         if 0 <= gap < 2.0:
@@ -360,7 +399,17 @@ def _a_star_search(
                 for remaining in unassigned
                 if remaining != index
             )
-            heuristic = float(remaining_critical)
+            heuristic = float(remaining_critical) + sum(
+                min(
+                    (
+                        _time_of_day_cost(s, s + orders[r]["duration"])
+                        for s in domains[r]
+                    ),
+                    default=0.0,
+                )
+                for r in unassigned
+                if r != index
+            )
             heapq.heappush(
                 frontier,
                 (
@@ -408,11 +457,16 @@ def _schedule_objective(
         mean = sum(loads) / len(loads)
         imbalance += sum((load - mean) ** 2 for load in loads) / len(loads)
 
-    windows: dict[tuple[str, float, float], list[int]] = defaultdict(list)
+    windows: dict[tuple[str, str, float, float], list[int]] = defaultdict(list)
     for index, start in assignment.items():
         order = orders[index]
         windows[
-            (order["section_id"], start, round(start + order["duration"], 6))
+            (
+                order["section_id"],
+                order["track_line"],
+                start,
+                round(start + order["duration"], 6),
+            )
         ].append(index)
     merges = sum(len(group) - 1 for group in windows.values() if len(group) > 1)
 
@@ -510,65 +564,81 @@ def solve_maintenance_schedule(
         enable_annealing,
     ) = _normalise_inputs(work_orders, train_schedules, config)
 
-    raw_domains = [
-        _all_start_candidates(order["duration"], horizon, slot_size)
-        for order in orders
-    ]
-    initial_domain_size = sum(map(len, raw_domains))
-    domains = [
-        _candidate_starts(order, trains, raw_domain)
-        for order, raw_domain in zip(orders, raw_domains)
-    ]
-    if enable_ac3:
-        _ac3(domains, orders)
-    remaining_domain_size = sum(map(len, domains))
+    search_limit = max(1, int(_get(config, "max_search_nodes", 100000)))
+    assignment: dict[int, float] = {}
+    initial_domain_size = 0
+    remaining_domain_size = 0
+    # UP_LINE and DOWN_LINE are independent CSPs: prune and search each separately.
+    for line in sorted({order["track_line"] for order in orders}):
+        line_indexes = [i for i, order in enumerate(orders) if order["track_line"] == line]
+        line_orders = [orders[i] for i in line_indexes]
+        line_trains = [t for t in trains if t["track_line"] == line]
+        raw_domains = [
+            _all_start_candidates(order["duration"], horizon, slot_size)
+            for order in line_orders
+        ]
+        initial_domain_size += sum(map(len, raw_domains))
+        domains = [
+            _candidate_starts(order, trains, raw_domain)
+            for order, raw_domain in zip(line_orders, raw_domains)
+        ]
+        if enable_ac3:
+            _ac3(domains, line_orders)
+        remaining_domain_size += sum(map(len, domains))
+
+        line_assignment, _ = _backtracking_search(
+            domains, line_orders, line_trains, search_limit
+        )
+        if line_assignment is not None:
+            line_assignment, _ = _a_star_search(
+                domains, line_orders, line_trains, line_assignment, search_limit
+            )
+        else:
+            line_assignment = _partial_schedule(domains, line_orders, line_trains)
+        if enable_annealing and line_assignment:
+            line_assignment = _simulated_annealing(
+                line_assignment, domains, line_orders, line_trains, config
+            )
+        for local, start in line_assignment.items():
+            assignment[line_indexes[local]] = start
+
     pruned_pct = (
         100.0 * (initial_domain_size - remaining_domain_size) / initial_domain_size
         if initial_domain_size
         else 0.0
     )
 
-    search_limit = max(1, int(_get(config, "max_search_nodes", 5000)))
-    assignment, _ = _backtracking_search(
-        domains, orders, trains, search_limit
-    )
-    if assignment is not None:
-        assignment, _ = _a_star_search(
-            domains, orders, trains, assignment, search_limit
-        )
-    else:
-        assignment = _partial_schedule(domains, orders, trains)
-
-    if enable_annealing and assignment:
-        assignment = _simulated_annealing(
-            assignment, domains, orders, trains, config
-        )
-
     schedule: list[dict[str, Any]] = []
     audit_trail: list[dict[str, Any]] = []
-    colocated_groups: dict[tuple[str, float, float], list[str]] = defaultdict(list)
+    colocated_groups: dict[tuple[str, str, float, float], list[str]] = defaultdict(list)
     for index, start in assignment.items():
         order = orders[index]
         end = round(start + order["duration"], 6)
-        colocated_groups[(order["section_id"], start, end)].append(order["work_id"])
+        colocated_groups[
+            (order["section_id"], order["track_line"], start, end)
+        ].append(order["work_id"])
 
     for index, start in sorted(
         assignment.items(), key=lambda item: (item[1], orders[item[0]]["work_id"])
     ):
         order = orders[index]
         end = round(start + order["duration"], 6)
-        colocated = colocated_groups[(order["section_id"], start, end)]
+        colocated = colocated_groups[
+            (order["section_id"], order["track_line"], start, end)
+        ]
         other_ids = sorted(work_id for work_id in colocated if work_id != order["work_id"])
         schedule.append(
             {
                 "work_id": order["work_id"],
                 "department": order["department"],
                 "section_id": order["section_id"],
+                "track_line": order["track_line"],
                 "start_time_hr": round(start, 6),
                 "end_time_hr": end,
                 "co_located_with": other_ids,
                 "fol_verified": True,
                 "power_isolated": order["department"] == "TRACTION",
+                "heavy_equipment": order["heavy_equipment"],
             }
         )
         audit_trail.append(

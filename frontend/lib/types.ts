@@ -1,6 +1,9 @@
 export type Department = "ENGINEERING" | "SIGNALLING" | "TRACTION";
 
+export type TrackLine = "UP_LINE" | "DOWN_LINE";
+
 export interface TrainOccupancyWindow {
+  track_line?: TrackLine;
   train_no: string;
   section_id: string;
   start_time_hr: number;
@@ -18,6 +21,8 @@ export interface ScheduledBlockAssignment {
   section_id: string;
   start_time_hr: number;
   end_time_hr: number;
+  track_line?: TrackLine;
+  heavy_equipment?: boolean;
   co_located_with?: string[] | null;
   fol_verified: boolean;
 }
