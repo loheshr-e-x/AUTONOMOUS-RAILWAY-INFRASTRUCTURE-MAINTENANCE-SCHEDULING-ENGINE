@@ -4,8 +4,9 @@ import { Play, Loader2, ScrollText, AlertTriangle, RefreshCw } from "lucide-reac
 import GanttChart from "@/components/GanttChart";
 import MetricsCards from "@/components/MetricsCards";
 import AuditDrawer from "@/components/AuditDrawer";
-import { generateSchedule, getHealth, getTrains } from "@/lib/api";
-import type { BlockScheduleResponse, TrainOccupancyWindow } from "@/lib/types";
+import WorkOrderInspector from "@/components/WorkOrderInspector";
+import { generateSchedule, getHealth, getTrains, getWorkOrders } from "@/lib/api";
+import type { BlockScheduleResponse, MaintenanceWorkOrder, TrainOccupancyWindow } from "@/lib/types";
 
 export default function Home() {
   const [trains, setTrains] = useState<TrainOccupancyWindow[]>([]);
@@ -18,6 +19,7 @@ export default function Home() {
   const [online, setOnline] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
+  const [orders, setOrders] = useState<MaintenanceWorkOrder[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
   const loadTrains = useCallback(async () => {
@@ -33,6 +35,7 @@ export default function Home() {
   useEffect(() => {
     getHealth().then(() => setOnline(true)).catch(() => setOnline(false));
     void Promise.resolve().then(loadTrains);
+    getWorkOrders().then(setOrders).catch(() => setOrders([]));
   }, [loadTrains]);
 
   async function run() {
@@ -58,6 +61,8 @@ export default function Home() {
   }
 
   const schedule = result?.schedule ?? [];
+  const selectedBlock = schedule.find((b) => b.work_id === selected) ?? null;
+  const selectedOrder = orders.find((o) => o.work_id === selected) ?? null;
   const sectionList = sectionsText.split(",").map((s) => s.trim()).filter(Boolean);
   const visibleTrains = sectionList.length ? trains.filter((t) => sectionList.includes(t.section_id)) : trains;
 
@@ -79,6 +84,10 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      <div className="rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-4 py-2 text-sm text-cyan-200">
+        Academic Demonstration: Units 1–4 Classical AI (AC-3 CSP + A* Search + FOL Invariants)
+      </div>
 
       <section className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
         <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-slate-400">
@@ -108,8 +117,10 @@ export default function Home() {
 
       <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
         <h2 className="mb-3 font-semibold">Time-Space Schedule {result && <span className="text-xs font-normal text-slate-500">· status: {result.status}</span>}</h2>
-        <GanttChart trains={visibleTrains} schedule={schedule} horizon={horizon} selectedId={selected} onSelect={(id) => { setSelected(id); setDrawer(true); }} />
+        <GanttChart trains={visibleTrains} schedule={schedule} horizon={horizon} selectedId={selected} onSelect={setSelected} />
       </section>
+
+      <WorkOrderInspector block={selectedBlock} order={selectedOrder} onSelect={setSelected} />
 
       <AuditDrawer open={drawer} onClose={() => setDrawer(false)} schedule={schedule} audit={result?.audit_trail ?? []} selectedId={selected} onSelect={setSelected} />
     </main>

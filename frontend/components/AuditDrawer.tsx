@@ -42,13 +42,13 @@ export default function AuditDrawer({ open, onClose, schedule, audit, selectedId
             <option value="">All rules ({audit.length})</option>
             {schedule.map((s) => (
               <option key={s.work_id} value={s.work_id}>
-                {s.work_id} — {s.section_id} {s.start_time_hr}–{s.end_time_hr}h
+                {s.work_id} — {s.section_id} {(s.track_line ?? "DOWN_LINE").replace("_", " ")} {s.start_time_hr}–{s.end_time_hr}h
               </option>
             ))}
           </select>
           {sel && (
             <p className="mt-2 text-xs text-slate-400">
-              {sel.department} · {sel.fol_verified ? "FOL verified" : "NOT verified"}
+              {sel.department} · {sel.section_id} {(sel.track_line ?? "DOWN_LINE").replace("_", " ")} · {sel.fol_verified ? "FOL verified" : "NOT verified"}
               {sel.co_located_with?.length ? ` · co-located with ${sel.co_located_with.join(", ")}` : ""}
             </p>
           )}

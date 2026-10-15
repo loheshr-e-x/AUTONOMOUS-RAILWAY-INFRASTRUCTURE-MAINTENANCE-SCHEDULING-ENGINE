@@ -23,6 +23,7 @@ export interface ScheduledBlockAssignment {
   end_time_hr: number;
   track_line?: TrackLine;
   heavy_equipment?: boolean;
+  power_isolated?: boolean;
   co_located_with?: string[] | null;
   fol_verified: boolean;
 }
@@ -45,4 +46,18 @@ export interface BlockScheduleResponse {
   schedule: ScheduledBlockAssignment[];
   metrics: OptimizationMetrics;
   audit_trail: AuditLogEntry[];
+}
+
+export type UrgencyLevel = 1 | 2 | 3;
+
+export interface MaintenanceWorkOrder {
+  work_id: string;
+  department: Department;
+  section_id: string;
+  track_line?: TrackLine;
+  heavy_equipment?: boolean;
+  defect_type: string;
+  duration_hrs: number;
+  urgency: UrgencyLevel;
+  co_location_allowed: boolean;
 }
