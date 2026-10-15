@@ -235,7 +235,7 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
             department=department,
             section_id=rng.choice(SUB_SECTION_IDS),
             defect_type=rng.choice(defects[department]),
-            duration_hrs=round(rng.uniform(1.0, 4.0), 2),
+            duration_hrs=rng.choice([0.5, 1.0, 1.5]),
             urgency=urgency,
             co_location_allowed=True,
         )
