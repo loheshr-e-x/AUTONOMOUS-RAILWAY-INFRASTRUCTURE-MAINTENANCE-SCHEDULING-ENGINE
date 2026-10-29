@@ -4,6 +4,8 @@ import csv
 import math
 import random
 import re
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
@@ -16,14 +18,78 @@ from .schemas.contracts import (
 )
 
 
-_ROUTE_SECTION_ID = "NDLS_CNB"
 _CORRIDOR_LENGTH_KM = 440.0
-_SUB_SECTIONS = (
-    ("NDLS_CNB_SEC1", 0.0, 150.0),
-    ("NDLS_CNB_SEC2", 150.0, 300.0),
-    ("NDLS_CNB_SEC3", 300.0, _CORRIDOR_LENGTH_KM),
-)
-SUB_SECTION_IDS = tuple(section[0] for section in _SUB_SECTIONS)
+
+
+@dataclass(frozen=True)
+class Route:
+    """A corridor: its endpoints, length and the sub-sections it is split into."""
+
+    route_id: str
+    name: str
+    origin: str
+    destination: str
+    length_km: float
+    origin_names: frozenset[str]
+    destination_names: frozenset[str]
+    origin_contains: tuple[str, ...] = ()
+    destination_contains: tuple[str, ...] = ()
+    wo_prefix: str = "WO-26027"
+
+    @property
+    def sub_sections(self) -> tuple[tuple[str, float, float], ...]:
+        first = round(self.length_km * 150.0 / 440.0, 1)
+        second = round(self.length_km * 300.0 / 440.0, 1)
+        return (
+            (f"{self.route_id}_SEC1", 0.0, first),
+            (f"{self.route_id}_SEC2", first, second),
+            (f"{self.route_id}_SEC3", second, self.length_km),
+        )
+
+    @property
+    def section_ids(self) -> tuple[str, ...]:
+        return tuple(section[0] for section in self.sub_sections)
+
+
+ROUTES: dict[str, Route] = {
+    route.route_id: route
+    for route in (
+        Route(
+            "NDLS_CNB", "New Delhi - Kanpur Central", "New Delhi", "Kanpur Central",
+            _CORRIDOR_LENGTH_KM,
+            frozenset({"ndls"}), frozenset({"cnb"}), ("newdelhi",), ("kanpur",),
+        ),
+        Route(
+            "HWH_PURI", "Howrah - Puri", "Howrah", "Puri", 500.0,
+            frozenset({"hwh", "howrah", "howrahjn"}), frozenset({"puri"}),
+            wo_prefix="WO-HWH",
+        ),
+        Route(
+            "BCT_AMD", "Mumbai Central - Ahmedabad", "Mumbai Central", "Ahmedabad", 490.0,
+            frozenset({"bct", "mumbaicentral"}),
+            frozenset({"adi", "amd", "ahmedabad", "ahmedabadjn"}),
+            wo_prefix="WO-BCT",
+        ),
+    )
+}
+DEFAULT_ROUTE_ID = "NDLS_CNB"
+SUB_SECTION_IDS = ROUTES[DEFAULT_ROUTE_ID].section_ids
+
+
+def get_route(route_id: str) -> Route:
+    try:
+        return ROUTES[route_id]
+    except KeyError:
+        raise ValueError(f"Unknown route {route_id!r}; expected one of {sorted(ROUTES)}") from None
+
+
+def route_for_section(section_id: str) -> str | None:
+    for route in ROUTES.values():
+        if section_id == route.route_id or section_id in route.section_ids:
+            return route.route_id
+    return None
+
+
 _STOP_RE = re.compile(
     r"^(?P<station>.*?)\s*\(arr=(?P<arrival>[^,]+),dep=(?P<departure>[^)]+)"
 )
@@ -68,14 +134,21 @@ def _parse_stops(raw_stops: str) -> list[_RouteStop]:
     return stops
 
 
-def _is_new_delhi(station: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", station.lower())
-    return normalized == "ndls" or "newdelhi" in normalized
+def _normalise_station(station: str) -> str:
+    name = re.sub(r"^(pq|rl)\s+", "", station.strip().lower())
+    return re.sub(r"[^a-z0-9]", "", name)
 
 
-def _is_kanpur(station: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", station.lower())
-    return normalized == "cnb" or "kanpur" in normalized
+def _is_origin(station: str, route: Route) -> bool:
+    name = _normalise_station(station)
+    return name in route.origin_names or any(t in name for t in route.origin_contains)
+
+
+def _is_destination(station: str, route: Route) -> bool:
+    name = _normalise_station(station)
+    return name in route.destination_names or any(
+        t in name for t in route.destination_contains
+    )
 
 
 def _clock_hours(value: str, train_no: str, station: str) -> float:
@@ -95,10 +168,11 @@ def _clock_hours(value: str, train_no: str, station: str) -> float:
 
 
 def _window_for_train(
-    train_no: str, entry: _RouteStop, route_exit: _RouteStop
+    train_no: str, entry: _RouteStop, route_exit: _RouteStop, route: Route
 ) -> list[TrainOccupancyWindow]:
-    # Delhi -> Kanpur (eastbound) runs on the DOWN_LINE; Kanpur -> Delhi (westbound) on the UP_LINE.
-    track_line = TrackLine.DOWN_LINE if _is_new_delhi(entry.station) else TrackLine.UP_LINE
+    # Origin -> destination runs on the DOWN_LINE; the reverse direction on the UP_LINE.
+    outbound = _is_origin(entry.station, route)
+    track_line = TrackLine.DOWN_LINE if outbound else TrackLine.UP_LINE
     start = _clock_hours(entry.departure, train_no, entry.station)
     end = _clock_hours(route_exit.arrival, train_no, route_exit.station)
     if end <= start:
@@ -106,13 +180,11 @@ def _window_for_train(
     duration = end - start
     # Position along the corridor is interpolated linearly between the endpoints.
     km_origin, km_dest = (
-        (0.0, _CORRIDOR_LENGTH_KM)
-        if _is_new_delhi(entry.station)
-        else (_CORRIDOR_LENGTH_KM, 0.0)
+        (0.0, route.length_km) if outbound else (route.length_km, 0.0)
     )
 
     windows: list[TrainOccupancyWindow] = []
-    for section_id, sec_start_km, sec_end_km in _SUB_SECTIONS:
+    for section_id, sec_start_km, sec_end_km in route.sub_sections:
         fractions = sorted(
             (km - km_origin) / (km_dest - km_origin)
             for km in (sec_start_km, sec_end_km)
@@ -136,58 +208,48 @@ def _window_for_train(
     return windows
 
 
-def get_train_schedules() -> list[TrainOccupancyWindow]:
-    """Load train windows for schedules passing both New Delhi and Kanpur."""
+def get_train_schedules(route_id: str = DEFAULT_ROUTE_ID) -> list[TrainOccupancyWindow]:
+    """Load train windows for schedules passing both endpoints of the route."""
+    return list(_cached_train_schedules(route_id))
+
+
+@lru_cache(maxsize=None)
+def _cached_train_schedules(route_id: str) -> tuple[TrainOccupancyWindow, ...]:
+    route = get_route(route_id)
     schedules: list[TrainOccupancyWindow] = []
     with _train_data_path().open(encoding="utf-8-sig", newline="") as csv_file:
         for row in csv.DictReader(csv_file):
             train_no = (row.get("train_no") or "").strip()
             stops = _parse_stops(row.get("intermediate_stops") or "")
-            new_delhi_index = next(
-                (
-                    index
-                    for index, stop in enumerate(stops)
-                    if _is_new_delhi(stop.station)
-                ),
+            origin_index = next(
+                (i for i, stop in enumerate(stops) if _is_origin(stop.station, route)),
                 None,
             )
-            kanpur_index = next(
-                (
-                    index
-                    for index, stop in enumerate(stops)
-                    if _is_kanpur(stop.station)
-                ),
+            destination_index = next(
+                (i for i, stop in enumerate(stops) if _is_destination(stop.station, route)),
                 None,
             )
-            if new_delhi_index is None or kanpur_index is None:
+            if origin_index is None or destination_index is None:
                 source = (row.get("source_station") or "").strip()
                 destination = (row.get("destination_station") or "").strip()
                 serves_route = (
-                    _is_new_delhi(source) and _is_kanpur(destination)
-                ) or (_is_kanpur(source) and _is_new_delhi(destination))
-                if serves_route:
-                    entry = _RouteStop(
-                        source, "", (row.get("departure_time") or "").strip()
-                    )
-                    route_exit = _RouteStop(
-                        destination, (row.get("arrival_time") or "").strip(), ""
-                    )
-                else:
+                    _is_origin(source, route) and _is_destination(destination, route)
+                ) or (_is_destination(source, route) and _is_origin(destination, route))
+                if not serves_route:
                     continue
-                if not train_no:
-                    raise ValueError("A train on the NDLS_CNB route has no train number")
-                schedules.extend(_window_for_train(train_no, entry, route_exit))
-                continue
-            if not train_no:
-                raise ValueError("A train on the NDLS_CNB route has no train number")
-
-            if new_delhi_index < kanpur_index:
-                entry, route_exit = stops[new_delhi_index], stops[kanpur_index]
+                entry = _RouteStop(source, "", (row.get("departure_time") or "").strip())
+                route_exit = _RouteStop(
+                    destination, (row.get("arrival_time") or "").strip(), ""
+                )
+            elif origin_index < destination_index:
+                entry, route_exit = stops[origin_index], stops[destination_index]
             else:
-                entry, route_exit = stops[kanpur_index], stops[new_delhi_index]
-            schedules.extend(_window_for_train(train_no, entry, route_exit))
+                entry, route_exit = stops[destination_index], stops[origin_index]
+            if not train_no:
+                raise ValueError(f"A train on the {route_id} route has no train number")
+            schedules.extend(_window_for_train(train_no, entry, route_exit, route))
 
-    return schedules
+    return tuple(schedules)
 
 
 def _free_gaps(
@@ -247,8 +309,12 @@ def _consume(
     return remaining
 
 
-def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
-    """Return 30 deterministic synthetic work orders across the NDLS_CNB sub-sections."""
+def get_maintenance_work_orders(
+    route_id: str = DEFAULT_ROUTE_ID,
+) -> list[MaintenanceWorkOrder]:
+    """Return 30 deterministic synthetic work orders across the route's sub-sections."""
+    route = get_route(route_id)
+    section_ids = route.section_ids
     rng = random.Random(_RANDOM_SEED)
     departments = [
         Department.ENGINEERING,
@@ -293,13 +359,13 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
         ),
     }
 
-    windows = get_train_schedules()
+    windows = get_train_schedules(route_id)
     # Free track per section/line, plus the blocks already opened there. Different
     # departments may share a block (same window), which is how a busy timetable
     # can absorb 30 orders; same-department work never overlaps.
     pools = {
         (section_id, line): _free_gaps(windows, section_id, (line,))
-        for section_id in SUB_SECTION_IDS
+        for section_id in section_ids
         for line in TrackLine
     }
     blocks: dict[tuple[str, TrackLine], list[tuple[float, float, set[Department]]]] = {
@@ -308,7 +374,7 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
     # The solver forbids overlap of different sections/departments on one line.
     line_free = {line: [(0.0, 24.0)] for line in TrackLine}
     down_free = {
-        sec: _free_gaps(windows, sec, (TrackLine.DOWN_LINE,)) for sec in SUB_SECTION_IDS
+        sec: _free_gaps(windows, sec, (TrackLine.DOWN_LINE,)) for sec in section_ids
     }
 
     def heavy_clear(sec: str, start: float, end: float) -> bool:
@@ -327,7 +393,7 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
 
         def plan(heavy_work: bool) -> list[tuple[str, float, float, bool]]:
             found: list[tuple[str, float, float, bool]] = []
-            for sec in SUB_SECTION_IDS:
+            for sec in section_ids:
                 for start, end, depts in blocks[(sec, track_line)]:
                     if (
                         department not in depts
@@ -340,7 +406,7 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
                         found.append((sec, start, end, True))
             if found:
                 return found
-            for sec in SUB_SECTION_IDS:
+            for sec in section_ids:
                 gaps = _intersect(pools[(sec, track_line)], line_free[track_line])
                 if heavy_work and track_line == TrackLine.UP_LINE:
                     gaps = _intersect(gaps, down_free[sec])
@@ -370,11 +436,11 @@ def get_maintenance_work_orders() -> list[MaintenanceWorkOrder]:
                 line_free[track_line] = _consume(line_free[track_line], (start, end))
                 blocks[key].append((start, end, {department}))
         else:
-            section_id = rng.choice(SUB_SECTION_IDS)
+            section_id = rng.choice(section_ids)
             duration = durations[0]
         orders.append(
             MaintenanceWorkOrder(
-                work_id=f"WO-26027-{index:03}",
+                work_id=f"{route.wo_prefix}-{index:03}",
                 department=department,
                 section_id=section_id,
                 # Alternate lines so each tier splits evenly: 15 UP, 15 DOWN.

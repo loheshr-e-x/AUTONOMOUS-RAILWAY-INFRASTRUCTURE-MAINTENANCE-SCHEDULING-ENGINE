@@ -61,3 +61,13 @@ export interface MaintenanceWorkOrder {
   urgency: UrgencyLevel;
   co_location_allowed: boolean;
 }
+
+export interface RouteInfo {
+  route_id: string;
+  name: string;
+  origin: string;
+  destination: string;
+  length_km: number;
+  section_ids: string[];
+  train_windows: number;
+}

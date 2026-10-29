@@ -1,12 +1,16 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Play, Loader2, ScrollText, AlertTriangle, RefreshCw } from "lucide-react";
+import { Play, Loader2, ScrollText, AlertTriangle, RefreshCw, ListChecks, Upload } from "lucide-react";
 import GanttChart from "@/components/GanttChart";
 import MetricsCards from "@/components/MetricsCards";
 import AuditDrawer from "@/components/AuditDrawer";
 import WorkOrderInspector from "@/components/WorkOrderInspector";
-import { generateSchedule, getHealth, getTrains, getWorkOrders } from "@/lib/api";
-import type { BlockScheduleResponse, MaintenanceWorkOrder, TrainOccupancyWindow } from "@/lib/types";
+import WorkOrderManager, { type ManagedOrder } from "@/components/WorkOrderManager";
+import {
+  clearCustomTrains, clearCustomWorkOrders, generateSchedule, getHealth, getRoutes, getTrains, getWorkOrders,
+  setCustomTrains, setCustomWorkOrders,
+} from "@/lib/api";
+import type { BlockScheduleResponse, MaintenanceWorkOrder, RouteInfo, TrainOccupancyWindow } from "@/lib/types";
 
 export default function Home() {
   const [trains, setTrains] = useState<TrainOccupancyWindow[]>([]);
@@ -22,21 +26,99 @@ export default function Home() {
   const [orders, setOrders] = useState<MaintenanceWorkOrder[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const loadTrains = useCallback(async () => {
+  const [routes, setRoutes] = useState<RouteInfo[]>([]);
+  const [routeId, setRouteId] = useState("NDLS_CNB");
+  const [managed, setManaged] = useState<ManagedOrder[]>([]);
+  const [customActive, setCustomActive] = useState(false);
+  const [uploadName, setUploadName] = useState<string | null>(null);
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const loadRoute = useCallback(async (id: string) => {
     try {
-      const t = await getTrains();
+      const [t, o, rs] = await Promise.all([getTrains(id), getWorkOrders(id), getRoutes()]);
       setTrains(t);
-      setSectionsText((cur) => cur || Array.from(new Set(t.map((x) => x.section_id))).slice(0, 5).join(", "));
+      setOrders(o);
+      setManaged(o.map((order) => ({ order, enabled: true })));
+      setRoutes(rs);
+      const route = rs.find((r) => r.route_id === id);
+      setSectionsText(route ? route.section_ids.join(", ") : id);
     } catch (e) {
-      setError(`Could not load train data: ${(e as Error).message}`);
+      setError(`Could not load route data: ${(e as Error).message}`);
     }
   }, []);
 
   useEffect(() => {
     getHealth().then(() => setOnline(true)).catch(() => setOnline(false));
-    void Promise.resolve().then(loadTrains);
-    getWorkOrders().then(setOrders).catch(() => setOrders([]));
-  }, [loadTrains]);
+    void Promise.resolve().then(() => loadRoute("NDLS_CNB"));
+  }, [loadRoute]);
+
+  async function changeRoute(id: string) {
+    setRouteId(id);
+    setResult(null);
+    setSelected(null);
+    setError(null);
+    try {
+      await Promise.all([clearCustomWorkOrders(), clearCustomTrains()]);
+      setCustomActive(false);
+      setUploadName(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    await loadRoute(id);
+  }
+
+  async function applyCustom() {
+    setBusy(true);
+    setError(null);
+    try {
+      const enabled = managed.filter((m) => m.enabled).map((m) => m.order);
+      await setCustomWorkOrders(enabled);
+      setOrders(enabled);
+      setCustomActive(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetCustom() {
+    setBusy(true);
+    try {
+      await clearCustomWorkOrders();
+      setCustomActive(false);
+      await loadRoute(routeId);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadTimetable(file: File) {
+    setError(null);
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (!Array.isArray(parsed)) throw new Error("Expected a JSON array of train occupancy windows");
+      setTrains(await setCustomTrains(parsed as TrainOccupancyWindow[]));
+      setUploadName(file.name);
+    } catch (e) {
+      setError(`Timetable upload failed: ${(e as Error).message}`);
+    }
+  }
+
+  async function clearUpload() {
+    try {
+      await clearCustomTrains();
+      setUploadName(null);
+      await loadRoute(routeId);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  const loadTrains = () => loadRoute(routeId);
 
   async function run() {
     setLoading(true);
@@ -51,7 +133,6 @@ export default function Home() {
       });
       setResult(r);
       setOnline(true);
-      await loadTrains();
     } catch (e) {
       setError((e as Error).message);
       if (e instanceof TypeError) setOnline(false);
@@ -90,6 +171,14 @@ export default function Home() {
       </div>
 
       <section className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+        <label className="flex w-56 flex-col gap-1 text-xs text-slate-400">
+          Corridor
+          <select value={routeId} onChange={(e) => void changeRoute(e.target.value)} className="rounded bg-slate-950 p-2 text-sm text-slate-100">
+            {(routes.length ? routes : [{ route_id: "NDLS_CNB", name: "NDLS_CNB" } as RouteInfo]).map((r) => (
+              <option key={r.route_id} value={r.route_id}>{r.route_id} · {r.name}</option>
+            ))}
+          </select>
+        </label>
         <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-slate-400">
           Section IDs (comma separated)
           <input value={sectionsText} onChange={(e) => setSectionsText(e.target.value)} className="rounded bg-slate-950 p-2 text-sm text-slate-100" />
@@ -100,6 +189,16 @@ export default function Home() {
         </label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ac3} onChange={(e) => setAc3(e.target.checked)} /> AC-3 pruning</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={sa} onChange={(e) => setSa(e.target.checked)} /> Simulated annealing</label>
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800" title="Upload a JSON array of train occupancy windows">
+          <Upload className="h-4 w-4" /> Timetable
+          <input type="file" accept="application/json,.json" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadTimetable(f); e.target.value = ""; }} />
+        </label>
+        {uploadName && <button onClick={clearUpload} className="rounded bg-amber-900/50 px-2 py-1 text-xs text-amber-200">{uploadName} ✕</button>}
+        <button onClick={() => setManagerOpen(true)} className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800">
+          <ListChecks className="h-4 w-4" /> Work Orders
+          <span className="rounded bg-slate-700 px-1.5 text-xs">{customActive ? "custom " : ""}{orders.length}</span>
+        </button>
         <button onClick={loadTrains} className="rounded-lg border border-slate-700 p-2.5 hover:bg-slate-800" aria-label="Reload trains"><RefreshCw className="h-4 w-4" /></button>
         <button onClick={run} disabled={loading || !sectionList.length} className="flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 font-medium hover:bg-cyan-500 disabled:opacity-50">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -121,6 +220,10 @@ export default function Home() {
       </section>
 
       <WorkOrderInspector block={selectedBlock} order={selectedOrder} onSelect={setSelected} />
+
+      <WorkOrderManager open={managerOpen} onClose={() => setManagerOpen(false)} items={managed} onChange={setManaged}
+        sectionIds={routes.find((r) => r.route_id === routeId)?.section_ids ?? []} customActive={customActive} busy={busy}
+        onApply={applyCustom} onReset={resetCustom} />
 
       <AuditDrawer open={drawer} onClose={() => setDrawer(false)} schedule={schedule} audit={result?.audit_trail ?? []} selectedId={selected} onSelect={setSelected} />
     </main>
