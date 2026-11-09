@@ -1,0 +1,10 @@
+case,expected_scheduled,baseline_scheduled,cpsat_scheduled,baseline_status,cpsat_status,baseline_outcome,cpsat_outcome,same_status,same_solver_outcome,classification,scheduled_count_matches_expected,detail,validation_behavior_matches
+same_resource_overlap_same_department,1,1,1,partial,partial,unschedulable,partial,True,False,equivalent,True,Same department cannot overlap within the same section and track.,
+same_resource_nonoverlap,2,2,2,success,success,success,success,True,True,equivalent,True,Adjacent non-overlapping intervals are accepted.,
+different_sections_overlap,2,2,2,success,success,success,success,True,True,equivalent,True,Different sections have independent baseline resources.,
+different_track_lines_overlap,2,2,2,success,success,success,success,True,True,equivalent,True,Different track lines are independent maintenance resources.,
+cross_department_exact_colocation,2,2,2,success,success,success,success,True,True,equivalent,True,Cross-department overlap is allowed for identical windows when both allow co-location.,
+cross_department_partial_overlap,1,1,1,partial,partial,unschedulable,partial,True,False,equivalent,True,Cross-department non-identical overlap is rejected.,
+heavy_equipment_adjacent_train,0,0,0,unschedulable,unschedulable,unschedulable,unschedulable,True,True,equivalent,True,Heavy equipment is filtered against train occupancy on the other line.,
+maintenance_heavy_opposite_line_overlap,2,2,2,success,success,success,success,True,True,baseline_limitation,True,Baseline does not prohibit heavy-equipment maintenance from overlapping maintenance on the adjacent line.,
+missing_required_duration,,,,,,rejected: ValueError,rejected: ValueError,,True,equivalent_validation,,Both implementations use the baseline normalizer and reject a work order without duration_hrs.,True

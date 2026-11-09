@@ -1,0 +1,35 @@
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript dependencies and generated output
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local environment and operating system files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Generated repository snapshots
+/repomix-output*.xml
+
+# Local agent worktrees, if placed inside this repository
+/agent-a-data/
+/agent-b-logic/
+/agent-c-solver/
+/agent-d-frontend/

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { X, Plus, Trash2, Pencil, Check } from "lucide-react";
 import type { Department, MaintenanceWorkOrder, TrackLine, UrgencyLevel } from "@/lib/types";
+import { scenarioWorkOrderDurationError } from "@/lib/scenario-storage";
 
 export interface ManagedOrder {
   order: MaintenanceWorkOrder;
@@ -16,13 +17,14 @@ interface Props {
   sectionIds: string[];
   customActive: boolean;
   busy: boolean;
-  onApply: () => void;
-  onReset: () => void;
+  onApply?: () => void;
+  onReset?: () => void;
+  mode?: "production" | "scenario";
 }
 
 const DEPTS: Department[] = ["ENGINEERING", "SIGNALLING", "TRACTION"];
 const LINES: TrackLine[] = ["UP_LINE", "DOWN_LINE"];
-const DURATIONS = [0.5, 1, 1.5, 2, 3, 4];
+const PRODUCTION_DURATIONS = [0.5, 1, 1.5, 2, 3, 4];
 
 function blank(sectionIds: string[], existing: ManagedOrder[]): MaintenanceWorkOrder {
   let n = existing.length + 1;
@@ -42,7 +44,18 @@ function blank(sectionIds: string[], existing: ManagedOrder[]): MaintenanceWorkO
 
 const field = "rounded bg-slate-950 p-1.5 text-xs text-slate-100";
 
-export default function WorkOrderManager({ open, onClose, items, onChange, sectionIds, customActive, busy, onApply, onReset }: Props) {
+export default function WorkOrderManager({
+  open,
+  onClose,
+  items,
+  onChange,
+  sectionIds,
+  customActive,
+  busy,
+  onApply,
+  onReset,
+  mode = "production",
+}: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<MaintenanceWorkOrder | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -69,9 +82,22 @@ export default function WorkOrderManager({ open, onClose, items, onChange, secti
     if (!draft || editing === null) return;
     const id = draft.work_id.trim();
     if (!id) return setFormError("Work order ID is required.");
+    if (mode === "scenario") {
+      if (draft.work_id !== id) {
+        return setFormError("Work order ID must not have leading or trailing whitespace.");
+      }
+      if (!draft.section_id || draft.section_id !== draft.section_id.trim()) {
+        return setFormError("Section ID must be non-empty and trimmed.");
+      }
+      if (!draft.defect_type || draft.defect_type !== draft.defect_type.trim()) {
+        return setFormError("Defect type must be non-empty and trimmed.");
+      }
+      const durationError = scenarioWorkOrderDurationError(draft.duration_hrs);
+      if (durationError) return setFormError(durationError);
+    }
     if (items.some((m) => m.order.work_id === id && (isNew || m.order.work_id !== editing)))
       return setFormError(`ID ${id} already exists.`);
-    const next = { ...draft, work_id: id };
+    const next = { ...draft, work_id: mode === "scenario" ? draft.work_id : id };
     onChange(isNew ? [...items, { order: next, enabled: true }] : items.map((m) => (m.order.work_id === editing ? { ...m, order: next } : m)));
     setEditing(null);
     setDraft(null);
@@ -88,14 +114,18 @@ export default function WorkOrderManager({ open, onClose, items, onChange, secti
           <button onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <p className="text-xs text-slate-400">
-          Create, edit or toggle work orders, then apply them. {customActive ? "A custom set is active and will be used by the solver." : "Synthetic orders are in use until you apply."}
+          {mode === "scenario"
+            ? "Edit this offline scenario only. Changes do not affect production work orders or invoke a solver."
+            : `Create, edit or toggle work orders, then apply them. ${customActive ? "A custom set is active and will be used by the solver." : "Synthetic orders are in use until you apply."}`}
         </p>
         <div className="flex flex-wrap gap-2">
           <button onClick={startNew} className="flex items-center gap-1 rounded bg-cyan-600 px-3 py-1.5 text-sm hover:bg-cyan-500"><Plus className="h-4 w-4" /> New</button>
-          <button onClick={onApply} disabled={busy || enabledCount === 0} className="rounded border border-emerald-600 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-50">
-            Apply {enabledCount} enabled
-          </button>
-          <button onClick={onReset} disabled={busy} className="rounded border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50">Reset to synthetic</button>
+          {mode === "production" && <>
+            <button onClick={onApply} disabled={busy || enabledCount === 0} className="rounded border border-emerald-600 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-950 disabled:opacity-50">
+              Apply {enabledCount} enabled
+            </button>
+            <button onClick={onReset} disabled={busy} className="rounded border border-slate-600 px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50">Reset to synthetic</button>
+          </>}
         </div>
 
         {draft && (
@@ -112,11 +142,25 @@ export default function WorkOrderManager({ open, onClose, items, onChange, secti
               <select className={field} value={draft.track_line ?? "UP_LINE"} onChange={(e) => set("track_line", e.target.value as TrackLine)}>{LINES.map((l) => <option key={l}>{l}</option>)}</select>
             </label>
             <label className="flex flex-col gap-1">Duration (hrs)
-              <select className={field} value={draft.duration_hrs} onChange={(e) => set("duration_hrs", Number(e.target.value))}>{DURATIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+              {mode === "scenario" ? (
+                <input className={field} type="number" min="0.001" max="8" step="0.001" value={draft.duration_hrs} onChange={(e) => set("duration_hrs", Number(e.target.value))} />
+              ) : (
+                <select className={field} value={draft.duration_hrs} onChange={(e) => set("duration_hrs", Number(e.target.value))}>
+                  {PRODUCTION_DURATIONS.map((duration) => <option key={duration} value={duration}>{duration}</option>)}
+                </select>
+              )}
             </label>
             <label className="flex flex-col gap-1">Urgency
               <select className={field} value={draft.urgency} onChange={(e) => set("urgency", Number(e.target.value) as UrgencyLevel)}>
-                <option value={1}>1 – Low</option><option value={2}>2 – Medium</option><option value={3}>3 – High</option>
+                {mode === "scenario" ? (
+                  <>
+                    <option value={1}>1 – Critical</option><option value={2}>2 – Medium</option><option value={3}>3 – Routine</option>
+                  </>
+                ) : (
+                  <>
+                    <option value={1}>1 – Low</option><option value={2}>2 – Medium</option><option value={3}>3 – High</option>
+                  </>
+                )}
               </select>
             </label>
             <div className="flex flex-col justify-end gap-1">
@@ -134,8 +178,8 @@ export default function WorkOrderManager({ open, onClose, items, onChange, secti
         <ul className="divide-y divide-slate-800 text-sm">
           {items.map((m) => (
             <li key={m.order.work_id} className={`flex items-center gap-3 py-2 ${m.enabled ? "" : "opacity-40"}`}>
-              <input type="checkbox" checked={m.enabled} aria-label={`Toggle ${m.order.work_id}`}
-                onChange={() => onChange(items.map((x) => (x === m ? { ...x, enabled: !x.enabled } : x)))} />
+              {mode === "production" && <input type="checkbox" checked={m.enabled} aria-label={`Toggle ${m.order.work_id}`}
+                onChange={() => onChange(items.map((x) => (x === m ? { ...x, enabled: !x.enabled } : x)))} />}
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-xs">{m.order.work_id} · {m.order.department}</div>
                 <div className="truncate text-xs text-slate-400">

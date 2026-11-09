@@ -38,7 +38,7 @@ export default function MetricsCards({
   const t = metrics?.solver_execution_time_sec;
   const cards = [
     { label: "Search Space Pruned (AC-3)", value: metrics ? `${metrics.search_space_pruned_pct.toFixed(1)}%` : "—", icon: Scissors, color: "text-cyan-400" },
-    { label: "Safety Rule Compliance", value: metrics ? `${metrics.fol_rule_compliance_pct.toFixed(1)}%` : "—", icon: ShieldCheck, color: "text-emerald-400" },
+    { label: "Safety Rule Compliance", value: metrics?.fol_rule_compliance_pct == null ? "—" : `${metrics.fol_rule_compliance_pct.toFixed(1)}%`, icon: ShieldCheck, color: "text-emerald-400" },
     { label: "Track Hours Saved", value: metrics ? `${trackHoursSaved(schedule).toFixed(1)} h` : "—", sub: metrics ? `${metrics.co_location_merges_count} co-location merges` : undefined, icon: Clock, color: "text-amber-400", badge: `${metrics?.co_location_merges_count ?? 14} Parallel Maintenance Requests Bundled into Co-Located Block Windows` },
     { label: "Solver Speed", value: t === undefined ? "—" : t < 1 ? `${(t * 1000).toFixed(0)} ms` : `${t.toFixed(2)} s`, sub: metrics ? `${metrics.scheduled_requests}/${metrics.total_requests} blocks scheduled` : undefined, icon: Gauge, color: "text-fuchsia-400" },
   ];

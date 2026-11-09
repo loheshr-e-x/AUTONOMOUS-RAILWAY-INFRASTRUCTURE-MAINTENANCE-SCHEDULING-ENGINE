@@ -8,6 +8,7 @@ import random
 import time
 from collections import defaultdict, deque
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from itertools import count
 from typing import Any
 
@@ -162,11 +163,10 @@ def _candidate_starts(
             train["section_id"] == order["section_id"]
             and (
                 train["track_line"] == order["track_line"]
-                # Heavy UP_LINE equipment also needs the adjacent DOWN_LINE clear.
+                # Heavy equipment also needs the adjacent track line clear.
                 or (
                     order["heavy_equipment"]
-                    and order["track_line"] == "UP_LINE"
-                    and train["track_line"] == "DOWN_LINE"
+                    and train["track_line"] != order["track_line"]
                 )
             )
             and _overlaps(
@@ -198,6 +198,8 @@ def _compatible(
     orders: list[dict[str, Any]],
 ) -> bool:
     order_a, order_b = orders[index_a], orders[index_b]
+    if order_a["section_id"] != order_b["section_id"]:
+        return True
     if order_a["track_line"] != order_b["track_line"]:
         return True
     end_a = start_a + order_a["duration"]
@@ -222,10 +224,7 @@ def _ac3(
             a, b = orders[left], orders[right]
             if a["track_line"] != b["track_line"]:
                 continue
-            if (
-                a["department"] == b["department"]
-                or a["section_id"] == b["section_id"]
-            ):
+            if a["section_id"] == b["section_id"]:
                 neighbors[left].append(right)
                 neighbors[right].append(left)
 
@@ -307,22 +306,31 @@ def _mrv_variable(
     )
 
 
+@dataclass(frozen=True)
+class _BacktrackingResult:
+    assignment: dict[int, float] | None
+    complete: bool
+    exhausted: bool
+    limit_reached: bool
+    explored_nodes: int
+
+
 def _backtracking_search(
     domains: list[list[float]],
     orders: list[dict[str, Any]],
     trains: list[dict[str, Any]],
     node_limit: int,
-) -> tuple[dict[int, float] | None, int]:
+) -> _BacktrackingResult:
     nodes = 0
 
     def search(
         assignment: dict[int, float], unassigned: set[int]
-    ) -> dict[int, float] | None:
+    ) -> tuple[dict[int, float] | None, bool, bool]:
         nonlocal nodes
         if not unassigned:
-            return assignment
+            return assignment, True, False
         if nodes >= node_limit:
-            return None
+            return None, False, True
         nodes += 1
 
         index, options = _mrv_variable(unassigned, domains, assignment, orders)
@@ -335,12 +343,25 @@ def _backtracking_search(
         for start in options:
             next_assignment = dict(assignment)
             next_assignment[index] = start
-            result = search(next_assignment, unassigned - {index})
+            result, exhausted, limit_reached = search(
+                next_assignment, unassigned - {index}
+            )
             if result is not None:
-                return result
-        return None
+                return result, False, False
+            if limit_reached:
+                return None, False, True
+            if not exhausted:
+                return None, False, False
+        return None, True, False
 
-    return search({}, set(range(len(orders)))), nodes
+    assignment, exhausted, limit_reached = search({}, set(range(len(orders))))
+    return _BacktrackingResult(
+        assignment=assignment,
+        complete=assignment is not None,
+        exhausted=exhausted,
+        limit_reached=limit_reached,
+        explored_nodes=nodes,
+    )
 
 
 def _a_star_search(
@@ -564,10 +585,32 @@ def solve_maintenance_schedule(
         enable_annealing,
     ) = _normalise_inputs(work_orders, train_schedules, config)
 
+    if not orders:
+        return {
+            "status": "no_work",
+            "solver_outcome": "no_work",
+            "schedule": [],
+            "unscheduled_work_ids": [],
+            "metrics": {
+                "total_requests": 0,
+                "scheduled_requests": 0,
+                "search_space_pruned_pct": 0.0,
+                "fol_rule_compliance_pct": None,
+                "co_location_merges_count": 0,
+                "solver_execution_time_sec": round(time.perf_counter() - started_at, 6),
+            },
+            "audit_trail": [],
+        }
+
     search_limit = max(1, int(_get(config, "max_search_nodes", 100000)))
     assignment: dict[int, float] = {}
+    search_limit_reached = False
+    infeasibility_proven = False
     initial_domain_size = 0
+    filtered_domain_size_total = 0
     remaining_domain_size = 0
+    ac3_pruned_count = 0
+    domains_nonempty_after_ac3: bool | None = True if orders else None
     # UP_LINE and DOWN_LINE are independent CSPs: prune and search each separately.
     for line in sorted({order["track_line"] for order in orders}):
         line_indexes = [i for i, order in enumerate(orders) if order["track_line"] == line]
@@ -582,18 +625,25 @@ def solve_maintenance_schedule(
             _candidate_starts(order, trains, raw_domain)
             for order, raw_domain in zip(line_orders, raw_domains)
         ]
+        filtered_domain_size = sum(map(len, domains))
+        filtered_domain_size_total += filtered_domain_size
         if enable_ac3:
             _ac3(domains, line_orders)
+            ac3_pruned_count += filtered_domain_size - sum(map(len, domains))
+        domains_nonempty_after_ac3 &= all(domains)
         remaining_domain_size += sum(map(len, domains))
 
-        line_assignment, _ = _backtracking_search(
+        backtracking_result = _backtracking_search(
             domains, line_orders, line_trains, search_limit
         )
+        line_assignment = backtracking_result.assignment
         if line_assignment is not None:
             line_assignment, _ = _a_star_search(
                 domains, line_orders, line_trains, line_assignment, search_limit
             )
         else:
+            search_limit_reached |= backtracking_result.limit_reached
+            infeasibility_proven |= backtracking_result.exhausted
             line_assignment = _partial_schedule(domains, line_orders, line_trains)
         if enable_annealing and line_assignment:
             line_assignment = _simulated_annealing(
@@ -636,34 +686,27 @@ def solve_maintenance_schedule(
                 "start_time_hr": round(start, 6),
                 "end_time_hr": end,
                 "co_located_with": other_ids,
-                "fol_verified": True,
-                "power_isolated": order["department"] == "TRACTION",
                 "heavy_equipment": order["heavy_equipment"],
-            }
-        )
-        audit_trail.append(
-            {
-                "rule_name": "PhysicalBlockSafety",
-                "predicate_evaluated": (
-                    f"within_horizon({order['work_id']}) and "
-                    f"clear_of_train_occupancy({order['work_id']})"
-                ),
-                "passed": True,
-                "explanation": (
-                    f"{order['work_id']} fits within the planning horizon and "
-                    "does not overlap a passenger train occupancy window."
-                ),
             }
         )
 
     audit_trail.append(
         {
             "rule_name": "AC3DomainPruning",
-            "predicate_evaluated": "pairwise_schedule_constraints_are_arc_consistent",
-            "passed": True,
+            "predicate_evaluated": (
+                "all_candidate_domains_nonempty_after_ac3"
+                if enable_ac3
+                else "ac3_enabled"
+            ),
+            "passed": (
+                domains_nonempty_after_ac3
+                if enable_ac3
+                else None
+            ),
             "explanation": (
-                f"AC-3 removed {initial_domain_size - remaining_domain_size} of "
-                f"{initial_domain_size} candidate starts."
+                f"AC-3 removed {ac3_pruned_count} of "
+                f"{filtered_domain_size_total} "
+                "candidate starts remaining after train-conflict filtering."
                 if enable_ac3
                 else "AC-3 pruning was disabled; feasibility was checked during search."
             ),
@@ -673,22 +716,34 @@ def solve_maintenance_schedule(
     merges = sum(len(group) - 1 for group in colocated_groups.values() if len(group) > 1)
     scheduled_count = len(schedule)
     total_count = len(orders)
-    status = (
-        "success"
-        if scheduled_count == total_count
-        else "partial"
-        if scheduled_count
-        else "unschedulable"
-    )
+    unscheduled_work_ids = [
+        order["work_id"]
+        for index, order in enumerate(orders)
+        if index not in assignment
+    ]
+    if scheduled_count == total_count:
+        status = "success"
+        solver_outcome = "success"
+    elif infeasibility_proven:
+        status = "partial" if scheduled_count else "unschedulable"
+        solver_outcome = "unschedulable"
+    elif search_limit_reached:
+        status = "search_limit_reached"
+        solver_outcome = "search_limit_reached"
+    else:
+        status = "partial" if scheduled_count else "search_limit_reached"
+        solver_outcome = status
 
     return {
         "status": status,
+        "solver_outcome": solver_outcome,
         "schedule": schedule,
+        "unscheduled_work_ids": unscheduled_work_ids,
         "metrics": {
             "total_requests": total_count,
             "scheduled_requests": scheduled_count,
             "search_space_pruned_pct": round(pruned_pct, 2),
-            "fol_rule_compliance_pct": 100.0,
+            "fol_rule_compliance_pct": None,
             "co_location_merges_count": merges,
             "solver_execution_time_sec": round(time.perf_counter() - started_at, 6),
         },

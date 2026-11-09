@@ -1,0 +1,11 @@
+solver,scenario_size,scenario_status,runs,execution_time_mean_sec,execution_time_median_sec,execution_time_stdev_sec,feasibility_rate,mean_scheduled_work_orders,mean_scheduling_completeness,optimality_proof_rate,mean_objective_score,search_limit_runs,peak_memory_mb,unsupported_reason
+baseline,10,executed,2,0.8027173330774531,0.8027173330774531,0.0009883750462904572,1.0,10,1.0,0.0,13.600459848484851,0,,
+cp_sat,10,executed,2,0.030966500053182244,0.030966500053182244,0.000665250001475215,1.0,10,1.0,1.0,13.600459848484851,0,,
+baseline,25,executed,2,29.29604181216564,29.29604181216564,0.032026979024522007,1.0,25,1.0,0.0,46.77093186456401,2,,
+cp_sat,25,executed,2,2.6838198956102133,2.6838198956102133,0.0001868954859673977,1.0,25,1.0,1.0,46.417360435992585,0,,
+baseline,50,executed,2,72.92526145849843,72.92526145849843,0.1730740413768217,1.0,50,1.0,0.0,111.32652564935064,2,,
+cp_sat,50,executed,2,10.001834811992012,10.001834811992012,1.1104042641818523e-05,1.0,50,1.0,0.0,119.14742337662337,2,,
+baseline,100,unsupported,0,,,,,,,,,,,Existing generator provides only 90 distinct work orders across configured routes.
+cp_sat,100,unsupported,0,,,,,,,,,,,Existing generator provides only 90 distinct work orders across configured routes.
+baseline,200,unsupported,0,,,,,,,,,,,Existing generator provides only 90 distinct work orders across configured routes.
+cp_sat,200,unsupported,0,,,,,,,,,,,Existing generator provides only 90 distinct work orders across configured routes.

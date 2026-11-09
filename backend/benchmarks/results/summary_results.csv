@@ -1,0 +1,6 @@
+scenario_size,scenario_status,runs,execution_time_mean_sec,execution_time_median_sec,execution_time_stdev_sec,feasibility_rate,mean_scheduling_completeness,search_limit_runs,unsupported_reason
+10,executed,3,0.8250180549609164,0.8241119158919901,0.0036779480871784987,1.0,1.0,0,
+25,executed,3,30.14818933295707,30.14611112489365,0.031964001989904886,1.0,1.0,3,
+50,executed,3,74.57367754161048,74.62723595788702,0.25153494789201664,1.0,1.0,3,
+100,unsupported,0,,,,,,,Existing generator provides only 90 distinct work orders across configured routes; no extra data generated.
+200,unsupported,0,,,,,,,Existing generator provides only 90 distinct work orders across configured routes; no extra data generated.

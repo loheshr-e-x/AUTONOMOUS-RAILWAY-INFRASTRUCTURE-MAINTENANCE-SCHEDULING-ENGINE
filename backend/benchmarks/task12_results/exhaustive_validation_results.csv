@@ -1,0 +1,4 @@
+scenario,work_order_count,reference_maximum_scheduled,reference_objective_score,feasible_assignments_examined,cpsat_scheduled,cpsat_objective_score,cpsat_status,cpsat_optimality_proven,cpsat_matches_reference,baseline_scheduled,baseline_objective_score,limitation
+feasible_two_nonoverlapping,2,2,0.27222222222222225,7,2,0.27222222222222225,OPTIMAL,True,True,2,0.27222222222222225,Exhaustive check covers only this finite small instance and uses an independently written feasibility/objective evaluator.
+infeasible_train_blocks_all_windows,1,0,,1,0,,OPTIMAL,True,True,0,,Exhaustive check covers only this finite small instance and uses an independently written feasibility/objective evaluator.
+partial_two_full_horizon_conflict,2,1,0.27222222222222225,3,1,0.27222222222222225,OPTIMAL,True,True,1,0.27222222222222225,Exhaustive check covers only this finite small instance and uses an independently written feasibility/objective evaluator.

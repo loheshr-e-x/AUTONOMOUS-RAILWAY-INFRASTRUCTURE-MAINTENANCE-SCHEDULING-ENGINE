@@ -1,16 +1,46 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Play, Loader2, ScrollText, AlertTriangle, RefreshCw, ListChecks, Upload } from "lucide-react";
 import GanttChart from "@/components/GanttChart";
 import MetricsCards from "@/components/MetricsCards";
 import AuditDrawer from "@/components/AuditDrawer";
 import WorkOrderInspector from "@/components/WorkOrderInspector";
 import WorkOrderManager, { type ManagedOrder } from "@/components/WorkOrderManager";
+import ScenarioManager from "@/components/ScenarioManager";
+import ScenarioComparisonPanel from "@/components/ScenarioComparisonPanel";
 import {
-  clearCustomTrains, clearCustomWorkOrders, generateSchedule, getHealth, getRoutes, getTrains, getWorkOrders,
+  clearCustomTrains, clearCustomWorkOrders, compareScenarios, generateSchedule, getHealth, getRoutes, getTrains, getWorkOrders,
+  createScenarioComparisonRequest, ScenarioComparisonError,
   setCustomTrains, setCustomWorkOrders,
 } from "@/lib/api";
-import type { BlockScheduleResponse, MaintenanceWorkOrder, RouteInfo, TrainOccupancyWindow } from "@/lib/types";
+import type {
+  BlockScheduleResponse,
+  MaintenanceWorkOrder,
+  RouteInfo,
+  ScenarioComparisonResponse,
+  TrainOccupancyWindow,
+} from "@/lib/types";
+import {
+  createExperimentExportRecord,
+  canonicalScenarioInputDigest,
+  type ExperimentExportRecord,
+} from "@/lib/scenario-export";
+import {
+  beginComparisonRequest,
+  createComparisonRequestTracker,
+  finishComparisonRequest,
+  invalidateComparisonRequests,
+  isCurrentComparisonRequest,
+} from "@/lib/scenario-comparison-state";
+import {
+  createScenario,
+  deleteScenario,
+  duplicateScenario,
+  loadScenarios,
+  saveScenarios,
+  updateScenario,
+  type ScenarioRecord,
+} from "@/lib/scenario-storage";
 
 export default function Home() {
   const [trains, setTrains] = useState<TrainOccupancyWindow[]>([]);
@@ -33,6 +63,217 @@ export default function Home() {
   const [uploadName, setUploadName] = useState<string | null>(null);
   const [managerOpen, setManagerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
+  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
+  const [scenarioStorageStatus, setScenarioStorageStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [scenarioStorageError, setScenarioStorageError] = useState<string | null>(null);
+  const [scenarioSaveError, setScenarioSaveError] = useState<string | null>(null);
+  const [scenarioDirty, setScenarioDirty] = useState(false);
+  const [scenarioOrdersOpen, setScenarioOrdersOpen] = useState(false);
+  const [comparisonResult, setComparisonResult] = useState<ScenarioComparisonResponse | null>(null);
+  const [comparisonRequestDigest, setComparisonRequestDigest] = useState<string | null>(null);
+  const [comparisonError, setComparisonError] = useState<{ kind: "validation" | "unavailable" | "failed"; message: string } | null>(null);
+  const [comparisonRunning, setComparisonRunning] = useState(false);
+  const [experimentExportRecord, setExperimentExportRecord] = useState<ExperimentExportRecord | null>(null);
+  const [experimentExportError, setExperimentExportError] = useState<string | null>(null);
+  const comparisonRequests = useRef(createComparisonRequestTracker());
+
+  function invalidateComparison() {
+    invalidateComparisonRequests(comparisonRequests.current);
+    setComparisonRunning(false);
+    setComparisonResult(null);
+    setComparisonRequestDigest(null);
+    setComparisonError(null);
+    setExperimentExportRecord(null);
+    setExperimentExportError(null);
+  }
+
+  function reloadScenarios() {
+    if (scenarioDirty && !window.confirm("Discard unsaved scenario changes and reload saved data?")) return;
+    invalidateComparison();
+    setScenarioStorageStatus("loading");
+    setScenarioStorageError(null);
+    setScenarioSaveError(null);
+    try {
+      const saved = loadScenarios();
+      setScenarios(saved);
+      setSelectedScenarioId((current) =>
+        saved.some((scenario) => scenario.scenario_id === current)
+          ? current
+          : saved[0]?.scenario_id ?? null,
+      );
+      setScenarioDirty(false);
+      setScenarioStorageStatus("ready");
+    } catch (e) {
+      setScenarioStorageError((e as Error).message);
+      setScenarioStorageStatus("error");
+    }
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(reloadScenarios, 0);
+    return () => window.clearTimeout(timer);
+  // Load browser-local scenarios once after hydration; manual reload uses the same path.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const selectedScenario = scenarios.find((scenario) => scenario.scenario_id === selectedScenarioId) ?? null;
+
+  function markScenarioChanged(next: ScenarioRecord[]) {
+    invalidateComparison();
+    setScenarios(next);
+    setScenarioDirty(true);
+    setScenarioSaveError(null);
+  }
+
+  async function createLocalScenario(name: string, sectionIds: string[]) {
+    let defaults: MaintenanceWorkOrder[] = [];
+    let defaultsError: string | null = null;
+    try {
+      const routeIds = routes
+        .filter((route) => route.section_ids.some((id) => sectionIds.includes(id)))
+        .map((route) => route.route_id);
+      const fetched = await Promise.all(routeIds.map((id) => getWorkOrders(id)));
+      const seen = new Set<string>();
+      defaults = fetched.flat().filter((order) => {
+        if (!sectionIds.includes(order.section_id) || seen.has(order.work_id)) return false;
+        seen.add(order.work_id);
+        return true;
+      }).map((order) => ({
+        work_id: order.work_id,
+        department: order.department,
+        section_id: order.section_id,
+        track_line: order.track_line,
+        heavy_equipment: order.heavy_equipment,
+        defect_type: order.defect_type,
+        duration_hrs: order.duration_hrs,
+        urgency: order.urgency,
+        co_location_allowed: order.co_location_allowed,
+      }));
+    } catch (e) {
+      defaultsError = `Default work orders could not be loaded; the scenario was created empty. ${(e as Error).message}`;
+    }
+    try {
+      const created = createScenario(name, sectionIds, undefined, defaults);
+      markScenarioChanged([...scenarios, created]);
+      setSelectedScenarioId(created.scenario_id);
+      if (defaultsError) setScenarioSaveError(defaultsError);
+    } catch (e) {
+      setScenarioSaveError((e as Error).message);
+    }
+  }
+
+  function duplicateLocalScenario(scenarioId: string, name: string) {
+    try {
+      const source = scenarios.find((scenario) => scenario.scenario_id === scenarioId);
+      if (!source) throw new Error("The selected scenario no longer exists.");
+      const duplicate = duplicateScenario(source, name);
+      markScenarioChanged([...scenarios, duplicate]);
+      setSelectedScenarioId(duplicate.scenario_id);
+    } catch (e) {
+      setScenarioSaveError((e as Error).message);
+    }
+  }
+
+  function updateLocalScenario(
+    scenarioId: string,
+    update: { scenario_name: string; solver_configuration: ScenarioRecord["solver_configuration"] },
+  ) {
+    try {
+      markScenarioChanged(updateScenario(scenarios, scenarioId, (scenario) => ({
+        ...scenario,
+        ...update,
+        input_digest:
+          JSON.stringify(scenario.solver_configuration) ===
+          JSON.stringify(update.solver_configuration)
+            ? scenario.input_digest
+            : null,
+      })));
+    } catch (e) {
+      setScenarioSaveError((e as Error).message);
+    }
+  }
+
+  function deleteLocalScenario(scenarioId: string) {
+    const remaining = deleteScenario(scenarios, scenarioId);
+    markScenarioChanged(remaining);
+    if (selectedScenarioId === scenarioId) {
+      setSelectedScenarioId(remaining[0]?.scenario_id ?? null);
+      setScenarioOrdersOpen(false);
+    }
+  }
+
+  function saveLocalScenarios() {
+    try {
+      saveScenarios(scenarios);
+      setScenarioDirty(false);
+      setScenarioSaveError(null);
+    } catch (e) {
+      setScenarioSaveError((e as Error).message);
+    }
+  }
+
+  function selectScenario(scenarioId: string | null) {
+    if (scenarioId !== selectedScenarioId) invalidateComparison();
+    setSelectedScenarioId(scenarioId);
+  }
+
+  async function runScenarioComparison() {
+    if (!selectedScenario) return;
+    const requestId = beginComparisonRequest(comparisonRequests.current);
+    if (requestId === null) return;
+    setComparisonRunning(true);
+    setComparisonResult(null);
+    setComparisonRequestDigest(null);
+    setComparisonError(null);
+    setExperimentExportRecord(null);
+    setExperimentExportError(null);
+    try {
+      const request = createScenarioComparisonRequest(selectedScenario);
+      const [inputDigest, response] = await Promise.all([
+        canonicalScenarioInputDigest(request),
+        compareScenarios(request),
+      ]);
+      if (isCurrentComparisonRequest(comparisonRequests.current, requestId)) {
+        setComparisonRequestDigest(inputDigest);
+        setComparisonResult(response);
+        try {
+          const exportRecord = await createExperimentExportRecord(request, response);
+          if (isCurrentComparisonRequest(comparisonRequests.current, requestId)) {
+            setExperimentExportRecord(exportRecord);
+          }
+        } catch (exportError) {
+          if (isCurrentComparisonRequest(comparisonRequests.current, requestId)) {
+            setExperimentExportError((exportError as Error).message);
+          }
+        }
+      }
+    } catch (e) {
+      if (isCurrentComparisonRequest(comparisonRequests.current, requestId)) {
+        setComparisonError({
+          kind: e instanceof ScenarioComparisonError ? e.kind : "failed",
+          message: (e as Error).message,
+        });
+      }
+    } finally {
+      if (finishComparisonRequest(comparisonRequests.current, requestId)) {
+        setComparisonRunning(false);
+      }
+    }
+  }
+
+  function changeScenarioOrders(items: ManagedOrder[]) {
+    if (!selectedScenario) return;
+    try {
+      markScenarioChanged(updateScenario(scenarios, selectedScenario.scenario_id, (scenario) => ({
+        ...scenario,
+        work_orders: items.map((item) => item.order),
+        input_digest: null,
+      })));
+    } catch (e) {
+      setScenarioSaveError((e as Error).message);
+    }
+  }
 
   const loadRoute = useCallback(async (id: string) => {
     try {
@@ -151,7 +392,8 @@ export default function Home() {
     <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">SymbIO-Block Dashboard</h1>
+          <h1 className="text-2xl font-bold">AUTONOMOUS RAILWAY INFRASTRUCTURE MAINTENANCE
+SCHEDULING ENGINE</h1>
           <p className="text-sm text-slate-400">Symbolic CSP &amp; FOL railway maintenance block scheduling</p>
         </div>
         <div className="flex items-center gap-3 text-sm">
@@ -166,9 +408,49 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="rounded-lg border border-cyan-800/60 bg-cyan-950/30 px-4 py-2 text-sm text-cyan-200">
-        Academic Demonstration: Units 1–4 Classical AI (AC-3 CSP + A* Search + FOL Invariants)
-      </div>
+      <ScenarioManager
+        scenarios={scenarios}
+        routes={routes}
+        selectedScenarioId={selectedScenarioId}
+        storageStatus={scenarioStorageStatus}
+        storageError={scenarioStorageError}
+        saveError={scenarioSaveError}
+        dirty={scenarioDirty}
+        onSelect={selectScenario}
+        onCreate={createLocalScenario}
+        onDuplicate={duplicateLocalScenario}
+        onDelete={deleteLocalScenario}
+        onUpdate={updateLocalScenario}
+        onSave={saveLocalScenarios}
+        onReload={reloadScenarios}
+        onManageWorkOrders={() => setScenarioOrdersOpen(true)}
+      />
+
+      {selectedScenario && (
+        <WorkOrderManager
+          key={selectedScenario.scenario_id}
+          open={scenarioOrdersOpen && scenarioStorageStatus === "ready"}
+          onClose={() => setScenarioOrdersOpen(false)}
+          items={selectedScenario.work_orders.map((order) => ({ order, enabled: true }))}
+          onChange={changeScenarioOrders}
+          sectionIds={selectedScenario.solver_configuration.section_ids}
+          customActive={false}
+          busy={false}
+          mode="scenario"
+        />
+      )}
+
+      <ScenarioComparisonPanel
+        scenario={selectedScenario}
+        expectedInputDigest={comparisonRequestDigest}
+        running={comparisonRunning}
+        error={comparisonError}
+        result={comparisonResult}
+        exportRecord={experimentExportRecord}
+        exportError={experimentExportError}
+        onExportRecordCreated={setExperimentExportRecord}
+        onCompare={() => void runScenarioComparison()}
+      />
 
       <section className="flex flex-wrap items-end gap-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
         <label className="flex w-56 flex-col gap-1 text-xs text-slate-400">

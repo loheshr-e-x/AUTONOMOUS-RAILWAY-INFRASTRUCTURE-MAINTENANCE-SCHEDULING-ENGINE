@@ -1,5 +1,5 @@
 "use client";
-import { CheckCircle2, XCircle, X } from "lucide-react";
+import { CheckCircle2, CircleHelp, XCircle, X } from "lucide-react";
 import type { AuditLogEntry, ScheduledBlockAssignment } from "@/lib/types";
 
 interface Props {
@@ -48,7 +48,13 @@ export default function AuditDrawer({ open, onClose, schedule, audit, selectedId
           </select>
           {sel && (
             <p className="mt-2 text-xs text-slate-400">
-              {sel.department} · {sel.section_id} {(sel.track_line ?? "DOWN_LINE").replace("_", " ")} · {sel.fol_verified ? "FOL verified" : "NOT verified"}
+              {sel.department} · {sel.section_id} {(sel.track_line ?? "DOWN_LINE").replace("_", " ")} · {
+                sel.fol_verified === true
+                  ? "FOL verified"
+                  : sel.fol_verified === false
+                    ? "FOL not verified"
+                    : "FOL verification unavailable per assignment"
+              }
               {sel.co_located_with?.length ? ` · co-located with ${sel.co_located_with.join(", ")}` : ""}
             </p>
           )}
@@ -62,7 +68,11 @@ export default function AuditDrawer({ open, onClose, schedule, audit, selectedId
           {list.map((a, i) => (
             <div key={i} className="rounded-lg border border-slate-800 bg-slate-900 p-3 text-sm">
               <div className="flex items-center gap-2 font-medium">
-                {a.passed ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-rose-400" />}
+                {a.passed === true
+                  ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  : a.passed === false
+                    ? <XCircle className="h-4 w-4 text-rose-400" />
+                    : <CircleHelp className="h-4 w-4 text-amber-400" />}
                 {a.rule_name}
               </div>
               <code className="mt-2 block overflow-x-auto whitespace-pre-wrap rounded bg-black/40 p-2 text-xs text-cyan-300">

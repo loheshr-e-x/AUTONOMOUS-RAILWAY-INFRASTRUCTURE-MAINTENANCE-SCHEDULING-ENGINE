@@ -1,0 +1,95 @@
+entity,field,type,compatibility,required_or_default,meaning
+RailwayDomainModel,schema_version,literal integer,new,default 1,Version of this aggregate payload
+RailwayDomainModel,routes,list RailwayRoute,new,empty list,Routes represented in this graph
+RailwayDomainModel,sections,list RailwaySection,new,empty list,Track sections represented in this graph
+RailwayDomainModel,train_services,list RailwayTrainService,new,empty list,Train services represented in this graph
+RailwayDomainModel,train_occupancies,list RailwayTrainOccupancy,new,empty list,Train occupancy records; not proof of availability
+RailwayDomainModel,work_orders,list MaintenanceWorkOrder,new,empty list,Legacy-compatible work orders with optional metadata
+RailwayDomainModel,block_windows,list BlockWindow,new,empty list,Declared block or availability intervals
+RailwayDomainModel,departments,list RailwayDepartment,new,three canonical departments,Stable department identifiers and display names
+RailwayDomainModel,resources,list Resource,new,empty list,Crew or equipment resources
+RailwayDomainModel,dependencies,list WorkDependency,new,empty list,Explicit work-order relationships
+RailwayRoute,route_id,string,new,required,Unique route identifier
+RailwayRoute,name,string,new,required,Route display name
+RailwayRoute,origin,string,new,required,Origin label
+RailwayRoute,destination,string,new,required,Destination label
+RailwayRoute,length_km,positive float or null,new,optional,Route length in kilometers when known
+RailwayRoute,sections,list section IDs,new,empty list,Section IDs belonging to this route
+RailwayRoute,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+RailwaySection,section_id,string,existing identifier reused,required,Unique section identifier
+RailwaySection,route_id,string,new,required,Owning route identifier
+RailwaySection,name,string,new,required,Section display name
+RailwaySection,start_km,non-negative float or null,new,optional,Section start position in route kilometers
+RailwaySection,end_km,non-negative float or null,new,optional,Section end position in route kilometers
+RailwaySection,track_lines,list TrackLine or null,new,unknown by default,Known track lines; null means not supplied
+RailwaySection,infrastructure_metadata,object or null,new,unknown by default,Non-operational metadata values
+RailwaySection,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+RailwayTrainService,train_id,string,new,required,Unique internal service identifier
+RailwayTrainService,train_number,string,new,required,Train number represented as text
+RailwayTrainService,train_name,string or null,new,optional,Train name when available
+RailwayTrainService,operating_days,list OperatingDay or null,new,unknown by default,Declared days; null is unknown
+RailwayTrainService,route_id,string,new,required,Referenced route identifier
+RailwayTrainService,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+RailwayTrainOccupancy,occupancy_id,string,new,required,Unique occupancy record identifier
+RailwayTrainOccupancy,train_id,string,new,required,Referenced train service
+RailwayTrainOccupancy,section_id,string,existing identifier reused,required,Referenced track section
+RailwayTrainOccupancy,track_line,TrackLine or null,existing concept extended,unknown by default,Line occupied when known
+RailwayTrainOccupancy,entry_time,timezone-aware datetime,new,required,Occupancy interval start
+RailwayTrainOccupancy,exit_time,timezone-aware datetime,new,required,Occupancy interval end
+RailwayTrainOccupancy,start_km,non-negative float or null,new,optional,Legacy train_start_km when available
+RailwayTrainOccupancy,end_km,non-negative float or null,new,optional,Legacy train_end_km when available
+RailwayTrainOccupancy,source,string or null,new,optional,Informational source label
+RailwayTrainOccupancy,observation_timestamp,timezone-aware datetime or null,new,optional,When the occupancy was observed or supplied
+RailwayTrainOccupancy,provenance,DataProvenance,new,unknown default,"Origin, verification, and evidence metadata"
+MaintenanceWorkOrder,work_id,string,existing,required,Unique work-order identifier
+MaintenanceWorkOrder,department,Department,existing,required,"Engineering, Signalling, or Traction identifier"
+MaintenanceWorkOrder,section_id,string,existing,required,Referenced section identifier
+MaintenanceWorkOrder,track_line,TrackLine,existing,default DOWN_LINE,Requested track line
+MaintenanceWorkOrder,heavy_equipment,boolean,existing,default false,Existing scheduling input
+MaintenanceWorkOrder,defect_type,string,existing,required,Work or defect category
+MaintenanceWorkOrder,duration_hrs,positive float up to 8,existing,required,Requested work duration
+MaintenanceWorkOrder,urgency,UrgencyLevel,existing,required,Existing urgency code
+MaintenanceWorkOrder,co_location_allowed,boolean,existing,default true,Existing co-location eligibility
+MaintenanceWorkOrder,resource_requirements,list ResourceRequirement or null,new,unknown by default,Required resource types and positive quantities
+MaintenanceWorkOrder,prerequisites,list work IDs or null,new,unknown by default,Strict prerequisite work-order IDs
+MaintenanceWorkOrder,permitted_work_conditions,list WorkCondition or null,new,unknown by default,Declared permitted conditions; not policy enforcement
+MaintenanceWorkOrder,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+ResourceRequirement,resource_type,string,new,required,Required resource category
+ResourceRequirement,quantity,positive integer,new,required,Required count of the resource category
+WorkCondition,condition_id,string,new,required,Stable declared condition identifier
+WorkCondition,description,string or null,new,optional,Human-readable condition detail
+WorkCondition,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+BlockWindow,block_id,string,new,required,Unique block window identifier
+BlockWindow,section_id,string,existing identifier reused,required,Referenced section
+BlockWindow,track_line,TrackLine or null,existing concept extended,unknown by default,Line when known
+BlockWindow,start_time,timezone-aware datetime,new,required,Window start
+BlockWindow,end_time,timezone-aware datetime,new,required,Window end
+BlockWindow,availability_status,AvailabilityStatus,new,default UNKNOWN,Declared availability; not independently certified
+BlockWindow,source,string or null,new,optional,Informational source label
+BlockWindow,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+RailwayDepartment,department_id,Department,existing identifiers reused,required,ENGINEERING SIGNALLING or TRACTION
+RailwayDepartment,name,string,new,required,Display name; TRACTION displays as Traction Distribution
+Resource,resource_id,string,new,required,Unique crew or equipment resource identifier
+Resource,resource_type,string,new,required,Resource category
+Resource,department,Department,existing identifiers reused,required,Owning department
+Resource,capacity,positive float or null,new,unknown by default,Resource capacity where known
+Resource,availability_intervals,list DomainTimeInterval or null,new,unknown by default,Known intervals; null means unknown
+Resource,section_id,string or null,new,optional,Known associated section
+Resource,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+DomainTimeInterval,start_time,timezone-aware datetime,new,required,Availability interval start
+DomainTimeInterval,end_time,timezone-aware datetime,new,required,Availability interval end
+DomainTimeInterval,section_id,string or null,new,optional,Section associated with this interval
+WorkDependency,dependency_id,string,new,required,Unique relationship identifier
+WorkDependency,work_id,string,new,required,First referenced work order
+WorkDependency,related_work_id,string,new,required,Second referenced work order
+WorkDependency,relationship,DependencyType,new,required,Prerequisite successor shared-block or incompatibility
+WorkDependency,provenance,DataProvenance,new,unknown default,Origin and verification metadata
+DataProvenance,origin,DataOrigin,new,default UNKNOWN,PUBLIC_DATA SYNTHETIC USER_SUPPLIED AUTHENTICATED_EXTERNAL INFERRED UNKNOWN
+DataProvenance,source_label,string or null,new,optional,Informational source label; does not authenticate
+DataProvenance,source_uri,string or null,new,optional,Source location when available
+DataProvenance,observed_at,timezone-aware datetime or null,new,optional,Observation timestamp
+DataProvenance,confidence,float 0 through 1 or null,new,optional,Declared confidence; not a verification claim
+DataProvenance,verification_status,VerificationStatus,new,origin-dependent default,AUTHENTICATED UNVERIFIED or UNKNOWN
+DataProvenance,verified_at,timezone-aware datetime or null,new,required if authenticated,Time of asserted verification
+DataProvenance,verified_by,string or null,new,required if authenticated,Identity label for asserted verifier
+DataProvenance,verification_reference,string or null,new,required if authenticated,Reference to verification evidence

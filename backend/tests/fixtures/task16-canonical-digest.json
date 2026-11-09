@@ -1,0 +1,273 @@
+{
+  "baseline": {
+    "scenario_id": "digest-baseline",
+    "scenario_name": "Canonical baseline",
+    "model_version": "symbio-block-task16-simulation-v1",
+    "input_digest": null,
+    "work_orders": [
+      {
+        "work_id": "SIM-WO-1",
+        "department": "ENGINEERING",
+        "section_id": "S1",
+        "track_line": "UP_LINE",
+        "heavy_equipment": false,
+        "defect_type": "Inspection",
+        "duration_hrs": 1.75,
+        "urgency": 2,
+        "co_location_allowed": true
+      },
+      {
+        "work_id": "SIM-WO-2",
+        "department": "TRACTION",
+        "section_id": "S2",
+        "track_line": "DOWN_LINE",
+        "heavy_equipment": true,
+        "defect_type": "Signal repair",
+        "duration_hrs": 0.125,
+        "urgency": 3,
+        "co_location_allowed": false
+      }
+    ],
+    "train_windows": [
+      {
+        "train_no": "SIM-TRAIN-1",
+        "section_id": "S1",
+        "track_line": "UP_LINE",
+        "start_time_hr": 0.000001,
+        "end_time_hr": 0.000003
+      },
+      {
+        "train_no": "SIM-TRAIN-2",
+        "section_id": "S2",
+        "track_line": "DOWN_LINE",
+        "start_time_hr": 8.25,
+        "end_time_hr": 8.75
+      }
+    ],
+    "solver_configuration": {
+      "section_ids": ["S1", "S2"],
+      "time_horizon_hrs": 24.0,
+      "slot_duration_hrs": 0.5,
+      "train_clearance_hrs": 0.125,
+      "enable_ac3_pruning": true,
+      "enable_simulated_annealing": true,
+      "max_search_nodes": 100000,
+      "annealing_iterations": 500,
+      "annealing_initial_temperature": 2.0,
+      "annealing_cooling_rate": 0.995,
+      "workload_balance_weight": 0.1,
+      "co_location_reward": 0.5,
+      "cpsat_time_limit_seconds": 30.0,
+      "random_seed": 7
+    }
+  },
+  "cases": [
+    {
+      "name": "ordinary strings, numbers, arrays, and nested objects",
+      "request": {
+        "scenario_id": "ordinary",
+        "scenario_name": "Ordinary fixture",
+        "model_version": "symbio-block-task16-simulation-v1",
+        "input_digest": null,
+        "work_orders": [
+          {
+            "work_id": "SIM-WO-1",
+            "department": "ENGINEERING",
+            "section_id": "S1",
+            "track_line": "UP_LINE",
+            "heavy_equipment": false,
+            "defect_type": "Inspection",
+            "duration_hrs": 1.75,
+            "urgency": 2,
+            "co_location_allowed": true
+          },
+          {
+            "work_id": "SIM-WO-2",
+            "department": "TRACTION",
+            "section_id": "S2",
+            "track_line": "DOWN_LINE",
+            "heavy_equipment": true,
+            "defect_type": "Signal repair",
+            "duration_hrs": 0.125,
+            "urgency": 3,
+            "co_location_allowed": false
+          }
+        ],
+        "train_windows": [
+          {
+            "train_no": "SIM-TRAIN-1",
+            "section_id": "S1",
+            "track_line": "UP_LINE",
+            "start_time_hr": 0.000001,
+            "end_time_hr": 0.000003
+          },
+          {
+            "train_no": "SIM-TRAIN-2",
+            "section_id": "S2",
+            "track_line": "DOWN_LINE",
+            "start_time_hr": 8.25,
+            "end_time_hr": 8.75
+          }
+        ],
+        "solver_configuration": {
+          "section_ids": ["S1", "S2"],
+          "time_horizon_hrs": 24.0,
+          "slot_duration_hrs": 0.5,
+          "train_clearance_hrs": 0.125,
+          "enable_ac3_pruning": true,
+          "enable_simulated_annealing": true,
+          "max_search_nodes": 100000,
+          "annealing_iterations": 500,
+          "annealing_initial_temperature": 2.0,
+          "annealing_cooling_rate": 0.995,
+          "workload_balance_weight": 0.1,
+          "co_location_reward": 0.5,
+          "cpsat_time_limit_seconds": 30.0,
+          "random_seed": 7
+        }
+      }
+    },
+    {
+      "name": "unicode, escaping, and floating-point precision boundaries",
+      "request": {
+        "scenario_id": "precision-unicode",
+        "scenario_name": "Ignored metadata — 日本語",
+        "model_version": "symbio-block-task16-simulation-v1",
+        "input_digest": null,
+        "work_orders": [
+          {
+            "work_id": "SIM-Ω-01",
+            "department": "ENGINEERING",
+            "section_id": "S1",
+            "track_line": "UP_LINE",
+            "heavy_equipment": false,
+            "defect_type": "Inspection, “étude”\nline",
+            "duration_hrs": 0.000001,
+            "urgency": 2,
+            "co_location_allowed": true
+          }
+        ],
+        "train_windows": [
+          {
+            "train_no": "列車-🚆",
+            "section_id": "S1",
+            "track_line": "DOWN_LINE",
+            "start_time_hr": 0.0001,
+            "end_time_hr": 0.00010000000000000002
+          }
+        ],
+        "solver_configuration": {
+          "section_ids": ["S1"],
+          "time_horizon_hrs": 24.0,
+          "slot_duration_hrs": 0.000001,
+          "train_clearance_hrs": 0.0000001,
+          "enable_ac3_pruning": true,
+          "enable_simulated_annealing": false,
+          "max_search_nodes": 100000,
+          "annealing_iterations": 500,
+          "annealing_initial_temperature": 2.0,
+          "annealing_cooling_rate": 0.995,
+          "workload_balance_weight": 0.10000000000000002,
+          "co_location_reward": 10000000000000000.0,
+          "cpsat_time_limit_seconds": 0.00005,
+          "random_seed": 7
+        }
+      }
+    },
+    {
+      "name": "omitted fields and explicit null presentation metadata",
+      "request": {
+        "scenario_id": "defaults-omitted",
+        "scenario_name": null,
+        "input_digest": null,
+        "work_orders": [
+          {
+            "work_id": "SIM-WO-DEFAULT",
+            "department": "ENGINEERING",
+            "section_id": "S1",
+            "defect_type": "Inspection",
+            "duration_hrs": 1,
+            "urgency": 1
+          }
+        ],
+        "solver_configuration": {
+          "section_ids": ["S1"]
+        }
+      }
+    }
+  ],
+  "default_equivalent_request": {
+    "scenario_id": "defaults-explicit",
+    "scenario_name": "Explicit defaults",
+    "model_version": "symbio-block-task16-simulation-v1",
+    "input_digest": null,
+    "work_orders": [
+      {
+        "work_id": "SIM-WO-DEFAULT",
+        "department": "ENGINEERING",
+        "section_id": "S1",
+        "track_line": "DOWN_LINE",
+        "heavy_equipment": false,
+        "defect_type": "Inspection",
+        "duration_hrs": 1.0,
+        "urgency": 1,
+        "co_location_allowed": true
+      }
+    ],
+    "train_windows": [],
+    "solver_configuration": {
+      "section_ids": ["S1"],
+      "time_horizon_hrs": 24.0,
+      "slot_duration_hrs": 0.5,
+      "train_clearance_hrs": 0.0,
+      "enable_ac3_pruning": true,
+      "enable_simulated_annealing": true,
+      "max_search_nodes": 100000,
+      "annealing_iterations": 500,
+      "annealing_initial_temperature": 2.0,
+      "annealing_cooling_rate": 0.995,
+      "workload_balance_weight": 0.1,
+      "co_location_reward": 0.5,
+      "cpsat_time_limit_seconds": 30.0,
+      "random_seed": 7
+    }
+  },
+  "irrelevant_metadata": {
+    "scenario_id": "metadata-only-change",
+    "scenario_name": "Renamed scenario",
+    "input_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "digest_mutations": [
+    {"name": "model version", "path": ["model_version"], "value": "symbio-block-task16-simulation-v2"},
+    {"name": "work order ID", "path": ["work_orders", 0, "work_id"], "value": "SIM-WO-CHANGED"},
+    {"name": "department", "path": ["work_orders", 0, "department"], "value": "SIGNALLING"},
+    {"name": "work order section", "path": ["work_orders", 0, "section_id"], "value": "S2"},
+    {"name": "track line", "path": ["work_orders", 0, "track_line"], "value": "DOWN_LINE"},
+    {"name": "heavy equipment", "path": ["work_orders", 0, "heavy_equipment"], "value": true},
+    {"name": "defect type", "path": ["work_orders", 0, "defect_type"], "value": "Inspection Δ"},
+    {"name": "duration", "path": ["work_orders", 0, "duration_hrs"], "value": 2},
+    {"name": "urgency", "path": ["work_orders", 0, "urgency"], "value": 3},
+    {"name": "co-location", "path": ["work_orders", 0, "co_location_allowed"], "value": false},
+    {"name": "train number", "path": ["train_windows", 0, "train_no"], "value": "SIM-TRAIN-CHANGED"},
+    {"name": "train section", "path": ["train_windows", 0, "section_id"], "value": "S2"},
+    {"name": "train line", "path": ["train_windows", 0, "track_line"], "value": "DOWN_LINE"},
+    {"name": "train start", "path": ["train_windows", 0, "start_time_hr"], "value": 0.000002},
+    {"name": "train end", "path": ["train_windows", 0, "end_time_hr"], "value": 0.000004},
+    {"name": "section list", "path": ["solver_configuration", "section_ids"], "value": ["S2", "S1"]},
+    {"name": "horizon", "path": ["solver_configuration", "time_horizon_hrs"], "value": 23},
+    {"name": "slot duration", "path": ["solver_configuration", "slot_duration_hrs"], "value": 0.25},
+    {"name": "train clearance", "path": ["solver_configuration", "train_clearance_hrs"], "value": 0.25},
+    {"name": "AC-3 setting", "path": ["solver_configuration", "enable_ac3_pruning"], "value": false},
+    {"name": "annealing setting", "path": ["solver_configuration", "enable_simulated_annealing"], "value": false},
+    {"name": "search node limit", "path": ["solver_configuration", "max_search_nodes"], "value": 100001},
+    {"name": "annealing iterations", "path": ["solver_configuration", "annealing_iterations"], "value": 501},
+    {"name": "initial temperature", "path": ["solver_configuration", "annealing_initial_temperature"], "value": 2.25},
+    {"name": "cooling rate", "path": ["solver_configuration", "annealing_cooling_rate"], "value": 0.99},
+    {"name": "workload weight", "path": ["solver_configuration", "workload_balance_weight"], "value": -0.25},
+    {"name": "co-location reward", "path": ["solver_configuration", "co_location_reward"], "value": 0.75},
+    {"name": "CP-SAT time limit", "path": ["solver_configuration", "cpsat_time_limit_seconds"], "value": 31},
+    {"name": "random seed", "path": ["solver_configuration", "random_seed"], "value": 8},
+    {"name": "work order array order", "path": ["work_orders"], "value": "reverse"},
+    {"name": "train window array order", "path": ["train_windows"], "value": "reverse"}
+  ]
+}

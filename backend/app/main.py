@@ -12,12 +12,18 @@ from .data_engine import (
     route_for_section,
 )
 from .logic_engine import verify_safety_invariants
+from .scenario_engine import ScenarioInputError, run_scenario_comparison
 from .schemas.contracts import (
     AuditLogEntry,
     BlockScheduleResponse,
+    LegacyMaintenanceWorkOrderResponse,
     MaintenanceWorkOrder,
     SolverRequest,
     TrainOccupancyWindow,
+)
+from .schemas.scenario_contracts import (
+    ScenarioComparisonRequest,
+    ScenarioComparisonResponse,
 )
 from .solver_engine import solve_maintenance_schedule
 
@@ -128,12 +134,18 @@ def clear_custom_trains():
     return {"custom": False}
 
 
-@app.get("/api/data/work-orders", response_model=List[MaintenanceWorkOrder])
+@app.get(
+    "/api/data/work-orders",
+    response_model=List[LegacyMaintenanceWorkOrderResponse],
+)
 def get_maintenance_work_orders(route_id: str = Query(DEFAULT_ROUTE_ID)):
     return _work_orders_for(set(get_route(_require_route(route_id)).section_ids))
 
 
-@app.post("/api/data/work-orders/custom", response_model=List[MaintenanceWorkOrder])
+@app.post(
+    "/api/data/work-orders/custom",
+    response_model=List[LegacyMaintenanceWorkOrderResponse],
+)
 def set_custom_work_orders(orders: List[MaintenanceWorkOrder]):
     """Replace the synthetic work orders with a user-defined list until cleared."""
     global _custom_work_orders
@@ -163,19 +175,91 @@ def generate_schedule(payload: SolverRequest):
     work_orders = _work_orders_for(sections)
     trains = _trains_for(sections)
 
-    result = BlockScheduleResponse.model_validate(
-        solve_maintenance_schedule(work_orders, trains, payload)
-    )
+    try:
+        solver_result = solve_maintenance_schedule(work_orders, trains, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    _, fol_audit = verify_safety_invariants(result.schedule, trains)
-    if fol_audit:
-        passed = sum(1 for entry in fol_audit if entry.passed)
+    result = BlockScheduleResponse.model_validate(solver_result)
+    if result.solver_outcome is None:
+        result.solver_outcome = result.status
+    if result.solver_outcome == "success" and (
+        result.metrics.scheduled_requests != result.metrics.total_requests
+        or len(result.schedule) != result.metrics.total_requests
+        or bool(result.unscheduled_work_ids)
+    ):
+        result.solver_outcome = "partial"
+
+    # No trusted evidence source exists: request or solver supplied isolation
+    # claims are discarded, and no timetable coverage is passed to the verifier.
+    # The default EvidenceProvider authenticates nothing. Source labels are not
+    # authentication; a real provider must verify evidence against an integrated
+    # system before the verifier will treat a positive claim as proof.
+    for assignment in result.schedule:
+        assignment.fol_verified = None
+        assignment.power_isolated = None
+        assignment.power_isolation_source = None
+
+    safety_valid, fol_audit = verify_safety_invariants(result.schedule, trains)
+    audit_is_complete = bool(fol_audit) and all(
+        entry.passed is not None for entry in fol_audit
+    )
+    audit_agrees_with_result = all(
+        entry.passed is True for entry in fol_audit
+    ) == safety_valid
+    if audit_is_complete and audit_agrees_with_result:
+        passed = sum(1 for entry in fol_audit if entry.passed is True)
         result.metrics.fol_rule_compliance_pct = round(
             100.0 * passed / len(fol_audit), 2
         )
+    else:
+        result.metrics.fol_rule_compliance_pct = None
+
+    has_failed_check = any(entry.passed is False for entry in fol_audit)
+    has_unverified_check = not audit_is_complete or any(
+        entry.passed is None for entry in fol_audit
+    )
+    if has_failed_check or (not safety_valid and not has_unverified_check):
+        result.status = "safety_invalid"
+    elif result.solver_outcome == "no_work" and not result.schedule:
+        # No work is a solver outcome, not evidence that safety was checked.
+        result.status = "no_work"
+    elif not result.schedule and result.status == "unschedulable":
+        # Nothing was scheduled, so there is nothing to verify; keep the solver's
+        # status. It does not imply safety was verified.
+        pass
+    elif not safety_valid or has_unverified_check:
+        result.status = "safety_unverified"
+    elif result.status == "success" and (
+        result.metrics.scheduled_requests != result.metrics.total_requests
+        or len(result.schedule) != result.metrics.total_requests
+        or bool(result.unscheduled_work_ids)
+    ):
+        # Completeness is checked against the actual schedule, not only the
+        # solver's self-reported counts.
+        result.status = "partial"
+
     result.audit_trail.extend(fol_audit)
     _last_audit_trail = result.audit_trail
     return result
+
+
+@app.post(
+    "/api/experimental/scenarios/compare",
+    response_model=ScenarioComparisonResponse,
+)
+def compare_experimental_scenario(payload: ScenarioComparisonRequest):
+    """Run an offline paired comparison without production safety verification."""
+    try:
+        return run_scenario_comparison(
+            payload,
+            valid_section_ids=_valid_section_ids(),
+        )
+    except ScenarioInputError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[finding.model_dump(mode="json") for finding in exc.findings],
+        ) from exc
 
 
 @app.get("/api/audit/logs")

@@ -23,13 +23,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-const Flag = ({ on, label }: { on: boolean | undefined; label: string }) => (
+const Flag = ({ on, label }: { on: boolean | null | undefined; label: string }) => (
   <span
     className={`rounded border px-2 py-0.5 text-xs ${
       on ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-300" : "border-slate-700 text-slate-500"
     }`}
   >
-    {label}: {on ? "Yes" : "No"}
+    {label}: {on == null ? "Unknown" : on ? "Yes" : "No"}
   </span>
 );
 
